@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>比的基本性质验证工具</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --blue: #2b8cff;
+      --blue-soft: #e8f4ff;
+      --blue-card: #d6ecff;
+      --border: #d0d8e0;
+      --text: #2c3e50;
+      --muted: #5a6c7d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: linear-gradient(180deg, #f5f9fc 0%, #eef4fa 100%);
+      padding: 24px 16px 48px;
+    }
+    .wrap {
+      max-width: 520px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-family: "ZCOOL KuaiLe", "Noto Sans SC", cursive;
+      font-size: clamp(1.5rem, 5vw, 1.85rem);
+      color: var(--blue);
+      text-align: center;
+      margin: 0 0 8px;
+      font-weight: 400;
+      letter-spacing: 0.02em;
+    }
+    .hint {
+      text-align: center;
+      font-size: 0.88rem;
+      color: var(--muted);
+      line-height: 1.55;
+      margin: 0 0 22px;
+      padding: 0 8px;
+    }
+    .field {
+      margin-bottom: 14px;
+    }
+    .field label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .field input, .field select {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-size: 1rem;
+      background: #fff;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .field input:focus, .field select:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(43, 140, 255, 0.15);
+    }
+    .row2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .op-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .op-row .field { margin-bottom: 0; }
+    .op-btns {
+      display: flex;
+      gap: 6px;
+      padding-bottom: 2px;
+    }
+    .op-btns button {
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+      font-size: 0.9rem;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .op-btns button.active {
+      background: var(--blue-soft);
+      border-color: var(--blue);
+      color: var(--blue);
+      font-weight: 600;
+    }
+    .btn-apply {
+      width: 100%;
+      margin-top: 18px;
+      padding: 14px 20px;
+      border: none;
+      border-radius: 14px;
+      background: var(--blue);
+      color: #fff;
+      font-family: "ZCOOL KuaiLe", "Noto Sans SC", cursive;
+      font-size: 1.15rem;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(43, 140, 255, 0.35);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .btn-apply:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(43, 140, 255, 0.4);
+    }
+    .btn-apply:active {
+      transform: translateY(0);
+    }
+    .viz {
+      margin-top: 22px;
+      padding: 18px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      min-height: 200px;
+    }
+    .viz-title {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .bar-wrap {
+      position: relative;
+      height: 44px;
+      border-radius: 10px;
+      overflow: visible;
+      margin-bottom: 6px;
+    }
+    .bar-inner {
+      display: flex;
+      height: 100%;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .seg-a {
+      background: linear-gradient(180deg, #6eb6ff 0%, #4a9eff 100%);
+      min-width: 4px;
+      transition: width 0.12s ease-out;
+    }
+    .seg-b {
+      background: linear-gradient(180deg, #ffb86c 0%, #ff9f40 100%);
+      min-width: 4px;
+      flex: 1;
+      transition: width 0.12s ease-out;
+    }
+    .knob {
+      position: absolute;
+      top: 50%;
+      width: 22px;
+      height: 22px;
+      margin-left: -11px;
+      margin-top: -11px;
+      background: #ff3b3b;
+      border: 3px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(255, 59, 59, 0.45);
+      cursor: grab;
+      z-index: 2;
+      touch-action: none;
+    }
+    .knob:active { cursor: grabbing; }
+    .bar-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .viz-hint {
+      font-size: 0.75rem;
+      color: #8899aa;
+      margin-top: 14px;
+      text-align: center;
+    }
+    .divider-line {
+      height: 1px;
+      background: var(--border);
+      margin: 16px 0;
+    }
+    .results {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .card {
+      background: var(--blue-card);
+      border-radius: 14px;
+      padding: 14px 12px;
+      text-align: center;
+    }
+    .card .label {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .card .ratio {
+      font-size: 1.35rem;
+      font-weight: 600;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .card .value {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    .error {
+      color: #c0392b;
+      font-size: 0.85rem;
+      margin-top: 8px;
+      text-align: center;
+    }
+    .readonly-bar .seg-a, .readonly-bar .seg-b {
+      transition: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>比的基本性质验证工具</h1>
+    <p class="hint">拖拽红点调整比的前项/后项，验证「同时乘/除相同数（0 除外），比值不变」</p>
+
+    <div class="row2">
+      <div class="field">
+        <label for="antecedent">原始比（前项）</label>
+        <input id="antecedent" type="number" inputmode="decimal" value="15" min="0.0001" step="any" />
+      </div>
+      <div class="field">
+        <label for="consequent">原始比（后项）</label>
+        <input id="consequent" type="number" inputmode="decimal" value="10" min="0.0001" step="any" />
+      </div>
+    </div>
+
+    <div class="op-row" style="margin-top: 4px;">
+      <div class="field">
+        <label for="factor">同时乘/除的数</label>
+        <input id="factor" type="number" inputmode="decimal" value="2" step="any" />
+      </div>
+      <div class="op-btns" role="group" aria-label="运算">
+        <button type="button" id="opMul" class="active">乘</button>
+        <button type="button" id="opDiv">除</button>
+      </div>
+    </div>
+
+    <button type="button" class="btn-apply" id="applyBtn">应用变化</button>
+    <p class="error" id="errMsg" hidden></p>
+
+    <div class="viz" id="viz">
+      <div class="viz-title">可视化（拖拽下方红点改变前项与后项）</div>
+      <div class="bar-wrap" id="barInteractive">
+        <div class="bar-inner" id="barInner">
+          <div class="seg-a" id="segA"></div>
+          <div class="seg-b" id="segB"></div>
+        </div>
+        <div class="knob" id="knob" title="拖拽调整比例"></div>
+      </div>
+      <div class="bar-label">
+        <span>前项 <strong id="lblA">15</strong></span>
+        <span>后项 <strong id="lblB">10</strong></span>
+      </div>
+      <div class="divider-line"></div>
+      <div class="viz-title">变化后的比（与上图形状一致）</div>
+      <div class="bar-wrap readonly-bar">
+        <div class="bar-inner" id="barAfterInner">
+          <div class="seg-a" id="segAfterA"></div>
+          <div class="seg-b" id="segAfterB"></div>
+        </div>
+      </div>
+      <div class="bar-label">
+        <span>前项 <strong id="lblAfterA">—</strong></span>
+        <span>后项 <strong id="lblAfterB">—</strong></span>
+      </div>
+      <p class="viz-hint">两行的彩色条比例相同，表示两个比相等。</p>
+    </div>
+
+    <div class="results">
+      <div class="card">
+        <div class="label">原始比</div>
+        <div class="ratio" id="ratioOrig">15∶10</div>
+        <div class="value">比值 ≈ <span id="valOrig">1.5</span></div>
+      </div>
+      <div class="card">
+        <div class="label">变化后比</div>
+        <div class="ratio" id="ratioNew">—</div>
+        <div class="value">比值 ≈ <span id="valNew">—</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const elA = document.getElementById("antecedent");
+      const elB = document.getElementById("consequent");
+      const elFactor = document.getElementById("factor");
+      const btnMul = document.getElementById("opMul");
+      const btnDiv = document.getElementById("opDiv");
+      const applyBtn = document.getElementById("applyBtn");
+      const errMsg = document.getElementById("errMsg");
+
+      const segA = document.getElementById("segA");
+      const segB = document.getElementById("segB");
+      const segAfterA = document.getElementById("segAfterA");
+      const segAfterB = document.getElementById("segAfterB");
+      const knob = document.getElementById("knob");
+      const barWrap = document.getElementById("barInteractive");
+
+      const lblA = document.getElementById("lblA");
+      const lblB = document.getElementById("lblB");
+      const lblAfterA = document.getElementById("lblAfterA");
+      const lblAfterB = document.getElementById("lblAfterB");
+
+      const ratioOrig = document.getElementById("ratioOrig");
+      const ratioNew = document.getElementById("ratioNew");
+      const valOrig = document.getElementById("valOrig");
+      const valNew = document.getElementById("valNew");
+
+      let opIsMul = true;
+      let appliedNewA = null;
+      let appliedNewB = null;
+
+      function parseNum(v) {
+        const n = parseFloat(String(v).replace(",", "."));
+        return Number.isFinite(n) ? n : NaN;
+      }
+
+      function showError(msg) {
+        if (msg) {
+          errMsg.textContent = msg;
+          errMsg.hidden = false;
+        } else {
+          errMsg.hidden = true;
+        }
+      }
+
+      function formatRatioPart(n) {
+        if (!Number.isFinite(n)) return "—";
+        if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
+        const s = n.toFixed(6).replace(/\.?0+$/, "");
+        return s;
+      }
+
+      function ratioString(a, b) {
+        return formatRatioPart(a) + "∶" + formatRatioPart(b);
+      }
+
+      function setOp(mul) {
+        opIsMul = mul;
+        btnMul.classList.toggle("active", mul);
+        btnDiv.classList.toggle("active", !mul);
+      }
+
+      btnMul.addEventListener("click", () => {
+        setOp(true);
+        applyTransform();
+      });
+      btnDiv.addEventListener("click", () => {
+        setOp(false);
+        applyTransform();
+      });
+
+      function syncBarsFromInputs() {
+        const a = parseNum(elA.value);
+        const b = parseNum(elB.value);
+        if (!(a > 0 && b > 0)) return;
+        const sum = a + b;
+        const pctA = (a / sum) * 100;
+        segA.style.width = pctA + "%";
+        segB.style.flex = "none";
+        segB.style.width = 100 - pctA + "%";
+        knob.style.left = pctA + "%";
+        lblA.textContent = formatRatioPart(a);
+        lblB.textContent = formatRatioPart(b);
+      }
+
+      function syncAfterBars() {
+        if (appliedNewA == null || appliedNewB == null) {
+          segAfterA.style.width = "50%";
+          segAfterB.style.width = "50%";
+          lblAfterA.textContent = "—";
+          lblAfterB.textContent = "—";
+          return;
+        }
+        const sum = appliedNewA + appliedNewB;
+        const pctA = (appliedNewA / sum) * 100;
+        segAfterA.style.width = pctA + "%";
+        segAfterB.style.flex = "none";
+        segAfterB.style.width = 100 - pctA + "%";
+        lblAfterA.textContent = formatRatioPart(appliedNewA);
+        lblAfterB.textContent = formatRatioPart(appliedNewB);
+      }
+
+      function updateOrigDisplay() {
+        const a = parseNum(elA.value);
+        const b = parseNum(elB.value);
+        if (a > 0 && b > 0) {
+          ratioOrig.textContent = ratioString(a, b);
+          valOrig.textContent = (a / b).toFixed(4).replace(/\.?0+$/, "");
+        } else {
+          ratioOrig.textContent = "—";
+          valOrig.textContent = "—";
+        }
+      }
+
+      function applyTransform() {
+        showError("");
+        const a = parseNum(elA.value);
+        const b = parseNum(elB.value);
+        const k = parseNum(elFactor.value);
+
+        if (!(a > 0 && b > 0)) {
+          showError("请输入大于 0 的前项与后项。");
+          appliedNewA = appliedNewB = null;
+          syncAfterBars();
+          ratioNew.textContent = "—";
+          valNew.textContent = "—";
+          return;
+        }
+        if (!(k !== 0 && Number.isFinite(k))) {
+          showError("乘/除的数不能为 0，且须为有效数字。");
+          appliedNewA = appliedNewB = null;
+          syncAfterBars();
+          ratioNew.textContent = "—";
+          valNew.textContent = "—";
+          return;
+        }
+
+        let na, nb;
+        if (opIsMul) {
+          na = a * k;
+          nb = b * k;
+        } else {
+          na = a / k;
+          nb = b / k;
+        }
+        appliedNewA = na;
+        appliedNewB = nb;
+
+        ratioNew.textContent = ratioString(na, nb);
+        const rv = na / nb;
+        valNew.textContent = Number.isFinite(rv) ? rv.toFixed(4).replace(/\.?0+$/, "") : "—";
+        syncAfterBars();
+      }
+
+      let dragging = false;
+      let dragSum = 25;
+
+      function onDrag(clientX, fixedSum) {
+        const rect = barWrap.getBoundingClientRect();
+        let t = (clientX - rect.left) / rect.width;
+        t = Math.max(0.02, Math.min(0.98, t));
+        const sum = fixedSum != null ? fixedSum : (() => {
+          const a0 = parseNum(elA.value);
+          const b0 = parseNum(elB.value);
+          return (a0 > 0 && b0 > 0) ? a0 + b0 : 25;
+        })();
+        const a = sum * t;
+        const b = sum * (1 - t);
+        elA.value = a.toFixed(4).replace(/\.?0+$/, "");
+        elB.value = b.toFixed(4).replace(/\.?0+$/, "");
+        syncBarsFromInputs();
+        updateOrigDisplay();
+        applyTransform();
+      }
+
+      function pointerDown(e) {
+        e.preventDefault();
+        const a0 = parseNum(elA.value);
+        const b0 = parseNum(elB.value);
+        dragSum = (a0 > 0 && b0 > 0) ? a0 + b0 : 25;
+        dragging = true;
+        onDrag(e.clientX, dragSum);
+      }
+      function pointerMove(e) {
+        if (!dragging) return;
+        onDrag(e.clientX, dragSum);
+      }
+      function pointerUp() {
+        dragging = false;
+      }
+
+      knob.addEventListener("mousedown", pointerDown);
+      document.addEventListener("mousemove", pointerMove);
+      document.addEventListener("mouseup", pointerUp);
+      knob.addEventListener("touchstart", (e) => {
+        if (e.touches.length) pointerDown({ preventDefault: () => e.preventDefault(), clientX: e.touches[0].clientX });
+      }, { passive: false });
+      document.addEventListener("touchmove", (e) => {
+        if (!dragging || !e.touches.length) return;
+        e.preventDefault();
+        onDrag(e.touches[0].clientX, dragSum);
+      }, { passive: false });
+      document.addEventListener("touchend", pointerUp);
+
+      barWrap.addEventListener("click", (e) => {
+        if (e.target === knob) return;
+        onDrag(e.clientX, null);
+      });
+
+      ["input", "change"].forEach((ev) => {
+        elA.addEventListener(ev, () => {
+          syncBarsFromInputs();
+          updateOrigDisplay();
+          applyTransform();
+        });
+        elB.addEventListener(ev, () => {
+          syncBarsFromInputs();
+          updateOrigDisplay();
+          applyTransform();
+        });
+        elFactor.addEventListener(ev, applyTransform);
+      });
+
+      applyBtn.addEventListener("click", applyTransform);
+
+      window.addEventListener("resize", syncBarsFromInputs);
+
+      syncBarsFromInputs();
+      updateOrigDisplay();
+      applyTransform();
+    })();
+  </script>
+</body>
+</html>
