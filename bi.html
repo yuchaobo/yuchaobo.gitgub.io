@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>比 — 化简与自检</title>
+  <style>
+    :root {
+      --bg: #e8f4fc;
+      --panel: #ffffff;
+      --accent: #0d7fd6;
+      --accent-soft: #e3f2fd;
+      --text: #1a1a1a;
+      --muted: #5c6b7a;
+      --ok: #0d8a4a;
+      --bad: #c62828;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+      background: linear-gradient(165deg, var(--bg) 0%, #d4e9f7 100%);
+      color: var(--text);
+      padding: 1.5rem;
+    }
+    .wrap {
+      max-width: 640px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin: 0 0 1rem;
+    }
+    .card {
+      background: var(--panel);
+      border-radius: 12px;
+      padding: 1.25rem 1.35rem;
+      box-shadow: 0 4px 24px rgba(13, 127, 214, 0.08);
+      margin-bottom: 1rem;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem 1rem;
+      margin-bottom: 0.75rem;
+    }
+    .row:last-child { margin-bottom: 0; }
+    label {
+      min-width: 4.5rem;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    input[type="text"] {
+      flex: 1;
+      min-width: 120px;
+      padding: 0.45rem 0.65rem;
+      border: 1px solid #b8d4e8;
+      border-radius: 8px;
+      font-size: 1rem;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+    .hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.35rem;
+      line-height: 1.45;
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 0.55rem 1.4rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover { filter: brightness(1.06); }
+    button:active { transform: scale(0.98); }
+
+    /* 化简步骤 */
+    .steps-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin: 0 0 0.85rem;
+    }
+    .steps-box {
+      background: var(--accent-soft);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+      border: 1px solid #bbdefb;
+    }
+    .step-line {
+      margin-bottom: 0.65rem;
+      font-size: 0.98rem;
+      line-height: 1.65;
+    }
+    .step-line:last-child { margin-bottom: 0; }
+    .num {
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .result-banner {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 1.02rem;
+    }
+    .result-banner.ok { background: #e8f5e9; color: var(--ok); }
+    .result-banner.bad { background: #ffebee; color: var(--bad); }
+    .err {
+      color: var(--bad);
+      font-size: 0.92rem;
+      margin-top: 0.5rem;
+    }
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    .tabs label {
+      cursor: pointer;
+      padding: 0.4rem 0.85rem;
+      border-radius: 999px;
+      font-size: 0.88rem;
+      border: 1px solid #b8d4e8;
+      background: #fff;
+      color: var(--muted);
+      min-width: auto;
+    }
+    .tabs input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .tabs input:checked + span {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+    .tabs label span {
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>化简比 · 整数 / 小数 / 分数 </h1>
+
+    <div class="card">
+      <div class="tabs" role="tablist" aria-label="化简类型">
+        <label><input type="radio" name="ratioMode" value="decimal" checked /><span>小数比化简</span></label>
+        <label><input type="radio" name="ratioMode" value="fracDec" /><span>分数:小数化简</span></label>
+        <label><input type="radio" name="ratioMode" value="decFrac" /><span>小数:分数化简</span></label>
+        <label><input type="radio" name="ratioMode" value="general" /><span>整数 | 分数比化简</span></label>
+      </div>
+      <div class="row">
+        <label>前项</label>
+        <input type="text" id="aIn" placeholder="如 48、1.5、3/4" autocomplete="off" />
+      </div>
+      <div class="row">
+        <label>后项</label>
+        <input type="text" id="bIn" placeholder="如 40、0.3、2/5" autocomplete="off" />
+      </div>
+      <p class="hint" id="modeHint"></p>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <label>你的答案（前项）</label>
+        <input type="text" id="ansA" placeholder="化简后的前项" autocomplete="off" />
+      </div>
+      <div class="row">
+        <label>你的答案（后项）</label>
+        <input type="text" id="ansB" placeholder="化简后的后项" autocomplete="off" />
+      </div>
+      <div class="row" style="margin-top:0.5rem;">
+        <button type="button" id="submitBtn">提交答案</button>
+      </div>
+    </div>
+
+    <div class="card" id="outCard" style="display:none;">
+      <h2 class="steps-title">化简步骤</h2>
+      <div class="steps-box" id="steps"></div>
+      <div id="verdict"></div>
+    </div>
+  </div>
+
+  <script>
+(function () {
+  function gcd(a, b) {
+    a = Math.abs(a | 0);
+    b = Math.abs(b | 0);
+    while (b) { var t = a % b; a = b; b = t; }
+    return a || 1;
+  }
+
+  function lcm(a, b) {
+    if (!a || !b) return 0;
+    return Math.abs(a * b) / gcd(a, b);
+  }
+
+  /** @returns {{n:number,d:number}|null} */
+  function parseRational(str) {
+    if (str == null) return null;
+    str = String(str).trim().replace(/\s+/g, "");
+    if (!str) return null;
+
+    var neg = false;
+    if (str[0] === "-") { neg = true; str = str.slice(1); }
+    else if (str[0] === "+") str = str.slice(1);
+
+    if (str.indexOf("/") >= 0) {
+      var p = str.split("/");
+      if (p.length !== 2) return null;
+      var num = parseInt(p[0], 10);
+      var den = parseInt(p[1], 10);
+      if (!isFinite(num) || !isFinite(den) || den === 0) return null;
+      if (neg) num = -num;
+      return reduce(num, den);
+    }
+
+    if (str.indexOf(".") >= 0) {
+      var dot = str.indexOf(".");
+      var intPart = str.slice(0, dot);
+      var fracPart = str.slice(dot + 1);
+      if (!/^\d*$/.test(intPart.replace(/^0+/, "")) || !/^\d+$/.test(fracPart)) return null;
+      var ip = intPart === "" ? 0 : parseInt(intPart, 10);
+      var den = Math.pow(10, fracPart.length);
+      var num = ip * den + parseInt(fracPart, 10);
+      if (neg) num = -num;
+      return reduce(num, den);
+    }
+
+    var n = parseInt(str, 10);
+    if (!isFinite(n) || String(n) !== str && str !== "0") {
+      n = parseFloat(str);
+      if (!isFinite(n)) return null;
+      return parseRational(String(n));
+    }
+    if (neg) n = -n;
+    return { n: n, d: 1 };
+  }
+
+  function reduce(num, den) {
+    if (den < 0) { num = -num; den = -den; }
+    if (den === 0) return null;
+    var g = gcd(num, den);
+    num = (num / g) | 0;
+    den = (den / g) | 0;
+    if (den < 0) { num = -num; den = -den; }
+    return { n: num, d: den };
+  }
+
+  function formatRat(r) {
+    if (!r) return "";
+    if (r.d === 1) return String(r.n);
+    return r.n + "/" + r.d;
+  }
+
+  function trimRaw(s) {
+    return String(s).trim();
+  }
+
+  /** 小数位数（整数为 0）；含 / 则 -1 */
+  function decimalPlacesInString(s) {
+    s = trimRaw(s);
+    if (s.indexOf("/") >= 0) return -1;
+    if (s[0] === "-" || s[0] === "+") s = s.slice(1);
+    var dot = s.indexOf(".");
+    if (dot < 0) return 0;
+    return s.length - dot - 1;
+  }
+
+  function maxDecimalPlacesPair(rawA, rawB) {
+    var da = decimalPlacesInString(rawA);
+    var db = decimalPlacesInString(rawB);
+    if (da < 0 || db < 0) return null;
+    return Math.max(da, db);
+  }
+
+  /** 有理数 × 10^k → 整数（k 足够时整除） */
+  function scaleByPow10(r, mult) {
+    var x = r.n * mult;
+    if (x % r.d !== 0) return Math.round(x / r.d);
+    return (x / r.d) | 0;
+  }
+
+  /** 最简分数分母只含质因数 2、5 时，化为有限小数所需最小小数位数；-1 表示非有限小数 */
+  function terminatingMinK(r) {
+    var d = Math.abs(r.d);
+    if (d === 0) return -1;
+    var v2 = 0,
+      v5 = 0,
+      x = d;
+    while (x % 2 === 0) {
+      v2++;
+      x /= 2;
+    }
+    while (x % 5 === 0) {
+      v5++;
+      x /= 5;
+    }
+    if (x !== 1) return -1;
+    return Math.max(v2, v5);
+  }
+
+  /** 将最简分数固定为 k 位小数字符串（用于步骤展示） */
+  function decimalStrFromRat(r, k) {
+    if (k < 0) k = 0;
+    var neg = r.n < 0;
+    var n = Math.abs(r.n);
+    var d = Math.abs(r.d);
+    var pow = Math.pow(10, k);
+    var scaled = Math.round((n * pow) / d);
+    var intPart = Math.floor(scaled / pow);
+    var frac = scaled % pow;
+    var fracStr = String(frac);
+    while (fracStr.length < k) fracStr = "0" + fracStr;
+    return (neg ? "-" : "") + intPart + "." + fracStr;
+  }
+
+  /**
+   * 小数比：1 原始比 → 2 同乘 10ⁿ 化整数 → 3 最大公因数并同时除以 → 4 最简整数比
+   */
+  function simplifyDecimalRatioSteps(rawA, rawB) {
+    var ra = parseRational(rawA);
+    var rb = parseRational(rawB);
+    if (!ra || !rb) return { error: "无法识别前项或后项，请检查输入。" };
+    if (rb.n === 0) return { error: "后项不能为 0。" };
+    if (ra.n === 0 && rb.n === 0) return { error: "0:0 无意义，无法化简。" };
+
+    var k = maxDecimalPlacesPair(rawA, rawB);
+    if (k === null) {
+      return {
+        error: "当前为「小数比化简」：请不要输入分数。请改用上方的「整数 / 分数 / 混合」。"
+      };
+    }
+
+    var mult = Math.pow(10, k);
+    var i1 = scaleByPow10(ra, mult);
+    var i2 = scaleByPow10(rb, mult);
+    var g = gcd(i1, i2);
+    var fa = i1 / g,
+      fb = i2 / g;
+
+    var aShow = esc(trimRaw(rawA));
+    var bShow = esc(trimRaw(rawB));
+
+    var lines = [];
+    lines.push({ html: '1. 原始比：<span class="num">' + aShow + ":" + bShow + "</span>" });
+    lines.push({
+      html:
+        "2. 同时乘 <span class=\"num\">" +
+        mult +
+        "</span> 化成整数比：(" +
+        aShow +
+        "×" +
+        mult +
+        "):(" +
+        bShow +
+        "×" +
+        mult +
+        ") = <span class=\"num\">" +
+        i1 +
+        ":" +
+        i2 +
+        "</span>"
+    });
+    lines.push({
+      html:
+        "3. 找到最大公因数 <span class=\"num\">" +
+        g +
+        "</span>，同时除以：(" +
+        i1 +
+        "÷" +
+        g +
+        "):(" +
+        i2 +
+        "÷" +
+        g +
+        ") = <span class=\"num\">" +
+        fa +
+        ":" +
+        fb +
+        "</span>"
+    });
+    lines.push({ html: '4. 最简整数比：<span class="num">' + fa + ":" + fb + "</span>" });
+
+    return { lines: lines, simpleA: fa, simpleB: fb };
+  }
+
+  /**
+   * 分数:小数 — 六步：小数转分数 → 分数比 → 同乘分母最小公倍数 → …
+   */
+  function simplifyFracDecimalSteps(rawA, rawB) {
+    var a = trimRaw(rawA);
+    var b = trimRaw(rawB);
+    var ra = parseRational(a);
+    var rb = parseRational(b);
+    if (!ra || !rb) return { error: "无法识别前项或后项，请检查输入。" };
+    if (rb.n === 0) return { error: "后项不能为 0。" };
+    if (ra.n === 0 && rb.n === 0) return { error: "0:0 无意义，无法化简。" };
+
+    if (a.indexOf("/") < 0) {
+      return { error: "「分数:小数」：前项请填分数（如 1/2）。" };
+    }
+    if (b.indexOf(".") < 0) {
+      return { error: "「分数:小数」：后项请填小数（如 0.75）。" };
+    }
+
+    var p = ra.n,
+      q = ra.d,
+      r = rb.n,
+      s = rb.d;
+    var lcmDen = lcm(q, s);
+    var i1 = (p * lcmDen) / q;
+    var i2 = (r * lcmDen) / s;
+    var g = gcd(i1, i2);
+    var fa = i1 / g,
+      fb = i2 / g;
+
+    var orig = esc(a) + ":" + esc(b);
+    var lines = [];
+    lines.push({ html: '1. 原始比：<span class="num">' + orig + "</span>" });
+    lines.push({
+      html:
+        "2. 小数转分数：<span class=\"num\">" +
+        esc(b) +
+        "</span> = <span class=\"num\">" +
+        formatRat(rb) +
+        "</span>"
+    });
+    lines.push({
+      html:
+        "3. 转化为分数比：<span class=\"num\">" +
+        formatRat(ra) +
+        ":" +
+        formatRat(rb) +
+        "</span>"
+    });
+    lines.push({
+      html:
+        "4. 乘最小公倍数 <span class=\"num\">" +
+        lcmDen +
+        "</span> 化为整数比：<span class=\"num\">" +
+        i1 +
+        ":" +
+        i2 +
+        "</span>"
+    });
+    lines.push({
+      html:
+        "5. 除以最大公因数 <span class=\"num\">" +
+        g +
+        "</span>：(" +
+        i1 +
+        "÷" +
+        g +
+        "):(" +
+        i2 +
+        "÷" +
+        g +
+        ") = <span class=\"num\">" +
+        fa +
+        ":" +
+        fb +
+        "</span>"
+    });
+    lines.push({ html: '6. 最终结果：<span class="num">' + fa + ":" + fb + "</span>" });
+
+    return { lines: lines, simpleA: fa, simpleB: fb };
+  }
+
+  /**
+   * 小数:分数 — 六步：分数转小数 → 小数比 → 同乘 10ⁿ 化整数 → 除以最大公因数 → 最终结果
+   */
+  function simplifyDecimalFractionRatioSteps(rawA, rawB) {
+    var a = trimRaw(rawA);
+    var b = trimRaw(rawB);
+    var ra = parseRational(a);
+    var rb = parseRational(b);
+    if (!ra || !rb) return { error: "无法识别前项或后项，请检查输入。" };
+    if (rb.n === 0) return { error: "后项不能为 0。" };
+    if (ra.n === 0 && rb.n === 0) return { error: "0:0 无意义，无法化简。" };
+
+    if (a.indexOf(".") < 0) {
+      return { error: "「小数:分数」：前项请填小数（如 0.6）。" };
+    }
+    if (b.indexOf("/") < 0) {
+      return { error: "「小数:分数」：后项请填分数（如 3/4）。" };
+    }
+
+    var kRa = terminatingMinK(ra);
+    var kRb = terminatingMinK(rb);
+    if (kRb < 0) {
+      return {
+        error: "分数化为小数若不是有限小数，无法按「小数比」步骤化简，请改用「整数 / 分数 / 混合」。"
+      };
+    }
+    if (kRa < 0) {
+      return { error: "前项小数无法化为有限小数表示时请改用「整数 / 分数 / 混合」。" };
+    }
+
+    var d1 = decimalPlacesInString(rawA);
+    var k = Math.max(d1, kRa, kRb);
+    var mult = Math.pow(10, k);
+    var i1 = scaleByPow10(ra, mult);
+    var i2 = scaleByPow10(rb, mult);
+    var g = gcd(i1, i2);
+    var fa = i1 / g,
+      fb = i2 / g;
+
+    var dsA = decimalStrFromRat(ra, k);
+    var dsB = decimalStrFromRat(rb, k);
+    var orig = esc(a) + ":" + esc(b);
+
+    var lines = [];
+    lines.push({ html: '1. 原始比：<span class="num">' + orig + "</span>" });
+    lines.push({
+      html:
+        "2. 分数转小数：<span class=\"num\">" +
+        esc(b) +
+        "</span> = <span class=\"num\">" +
+        dsB +
+        "</span>"
+    });
+    lines.push({
+      html: '3. 转化为小数比：<span class="num">' + dsA + ":" + dsB + "</span>"
+    });
+    lines.push({
+      html:
+        "4. 乘 <span class=\"num\">" +
+        mult +
+        "</span> 化成整数比：<span class=\"num\">" +
+        i1 +
+        ":" +
+        i2 +
+        "</span>"
+    });
+    lines.push({
+      html:
+        "5. 除以最大公因数 <span class=\"num\">" +
+        g +
+        "</span>：(" +
+        i1 +
+        "÷" +
+        g +
+        "):(" +
+        i2 +
+        "÷" +
+        g +
+        ") = <span class=\"num\">" +
+        fa +
+        ":" +
+        fb +
+        "</span>"
+    });
+    lines.push({ html: '6. 最终结果：<span class="num">' + fa + ":" + fb + "</span>" });
+
+    return { lines: lines, simpleA: fa, simpleB: fb };
+  }
+
+  /** 整数 / 分数 / 混合：最小公倍数或同乘 + 约分 */
+  function simplifyGeneralRatioSteps(rawA, rawB) {
+    var ra = parseRational(rawA);
+    var rb = parseRational(rawB);
+    if (!ra || !rb) return { error: "无法识别前项或后项，请检查输入（整数、小数或 a/b 分数）。" };
+    if (rb.n === 0) return { error: "后项不能为 0。" };
+    if (ra.n === 0 && rb.n === 0) return { error: "0:0 无意义，无法化简。" };
+
+    var lines = [];
+    lines.push({ html: '1. 原始比：<span class="num">' + esc(rawA) + ":" + esc(rawB) + "</span>" });
+
+    var p = ra.n, q = ra.d, r = rb.n, s = rb.d;
+
+    var lcmDen = lcm(q, s);
+    var i1 = (p * lcmDen) / q;
+    var i2 = (r * lcmDen) / s;
+    var needBridge = lcmDen > 1;
+
+    if (needBridge) {
+      var eq =
+        "(" + formatRat(ra) + ")×" + lcmDen + " : (" + formatRat(rb) + ")×" + lcmDen +
+        " = <span class=\"num\">" + i1 + ":" + i2 + "</span>";
+      var isFracBoth = q > 1 && s > 1;
+      var line2 =
+        "2. 两分母的最小公倍数为 <span class=\"num\">" + lcmDen + "</span>，前项与后项同乘 <span class=\"num\">" +
+        lcmDen + "</span>：" + eq;
+      if (isFracBoth) {
+        line2 =
+          "2. 分数比：两分母的最小公倍数为 <span class=\"num\">" + lcmDen +
+          "</span>，前项与后项同乘这个最小公倍数：" + eq;
+      }
+      lines.push({ html: line2 });
+    }
+
+    var g = gcd(i1, i2);
+    var stepNum = lines.length + 1;
+    lines.push({
+      html: stepNum + ". 找到前项和后项的最大公因数：<span class=\"num\">" + g + "</span>"
+    });
+    stepNum++;
+    lines.push({
+      html: stepNum + ". 同时除以最大公因数：(" + i1 + "÷" + g + "):(" + i2 + "÷" + g + ") = <span class=\"num\">" +
+        (i1 / g) + ":" + (i2 / g) + "</span>"
+    });
+    stepNum++;
+    var fa = i1 / g, fb = i2 / g;
+    lines.push({
+      html: stepNum + ". 最简整数比：<span class=\"num\">" + fa + ":" + fb + "</span>"
+    });
+
+    return { lines: lines, simpleA: fa, simpleB: fb };
+  }
+
+  function simplifyRatioSteps(rawA, rawB, mode) {
+    if (mode === "decimal") return simplifyDecimalRatioSteps(rawA, rawB);
+    if (mode === "fracDec") return simplifyFracDecimalSteps(rawA, rawB);
+    if (mode === "decFrac") return simplifyDecimalFractionRatioSteps(rawA, rawB);
+    return simplifyGeneralRatioSteps(rawA, rawB);
+  }
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function ratiosEqual(simpleA, simpleB, ua, ub) {
+    var rU = parseRational(ua);
+    var rV = parseRational(ub);
+    if (!rU || !rV) return null;
+    if (rU.n === 0 && rV.n === 0) return false;
+    if (rV.n === 0) return false;
+    // simpleA/simpleB === rU/rV  => simpleA * rV.n * rU.d === simpleB * rU.n * rV.d
+    var left = simpleA * rU.d * rV.n;
+    var right = simpleB * rU.n * rV.d;
+    return left === right;
+  }
+
+  document.getElementById("submitBtn").addEventListener("click", function () {
+    var a = document.getElementById("aIn").value;
+    var b = document.getElementById("bIn").value;
+    var ansA = document.getElementById("ansA").value.trim();
+    var ansB = document.getElementById("ansB").value.trim();
+
+    var stepsEl = document.getElementById("steps");
+    var verdictEl = document.getElementById("verdict");
+    var outCard = document.getElementById("outCard");
+
+    var mode = document.querySelector('input[name="ratioMode"]:checked').value;
+    var res = simplifyRatioSteps(a, b, mode);
+    verdictEl.innerHTML = "";
+    stepsEl.innerHTML = "";
+
+    if (res.error) {
+      outCard.style.display = "block";
+      stepsEl.innerHTML = '<p class="err">' + esc(res.error) + "</p>";
+      return;
+    }
+
+    res.lines.forEach(function (L) {
+      var div = document.createElement("div");
+      div.className = "step-line";
+      div.innerHTML = L.html;
+      stepsEl.appendChild(div);
+    });
+
+    outCard.style.display = "block";
+
+    if (!ansA && !ansB) {
+      verdictEl.innerHTML =
+        '<div class="result-banner bad" style="margin-top:1rem;">请先填写「你的答案」两项再提交，以便判断对错。</div>';
+      return;
+    }
+
+    var cmp = ratiosEqual(res.simpleA, res.simpleB, ansA, ansB);
+    if (cmp === null) {
+      verdictEl.innerHTML =
+        '<div class="result-banner bad" style="margin-top:1rem;">无法解析你的答案，请用整数、小数或分数填写。</div>';
+      return;
+    }
+
+    if (cmp) {
+      verdictEl.innerHTML =
+        '<div class="result-banner ok">回答正确！最简整数比为 <span class="num">' +
+        res.simpleA + ":" + res.simpleB +
+        "</span>。</div>";
+    } else {
+      verdictEl.innerHTML =
+        '<div class="result-banner bad">回答错误。正确最简整数比为 <span class="num">' +
+        res.simpleA + ":" + res.simpleB +
+        "</span>。</div>";
+    }
+  });
+
+  function updateModeHint() {
+    var el = document.getElementById("modeHint");
+    var v = document.querySelector('input[name="ratioMode"]:checked').value;
+    if (v === "decimal") {
+      el.innerHTML =
+        "「小数比化简」：两项可填小数或整数；步骤为：原始比 → 同乘 10ⁿ 化成整数比 → 最大公因数并同时除以 → 最简整数比。";
+    } else if (v === "fracDec") {
+      el.innerHTML =
+        "「分数:小数」：前项填分数（如 <code>1/2</code>），后项填小数（如 <code>0.75</code>）。例题：<code>1/2:0.75</code> → <code>2:3</code>（先小数化分数，再按分数比化简）。";
+    } else if (v === "decFrac") {
+      el.innerHTML =
+        "「小数:分数」：前项填小数，后项填分数。例题：<code>0.6:3/4</code> → <code>4:5</code>（先分数转小数，再转化为小数比，同乘 10ⁿ 化整数比后化简）。";
+    } else {
+      el.innerHTML =
+        "「整数 / 分数 / 混合」：可任意输入整数、小数、分数；分数比将用分母最小公倍数同乘后再约分。";
+    }
+  }
+  document.querySelectorAll('input[name="ratioMode"]').forEach(function (r) {
+    r.addEventListener("change", updateModeHint);
+  });
+  updateModeHint();
+})();
+  </script>
+</body>
+</html>
