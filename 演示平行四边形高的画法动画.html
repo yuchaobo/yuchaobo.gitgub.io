@@ -719,31 +719,69 @@
           }
         }
 
-        applyStep(0)
-        wait(500, function () {
-          animateRulerSlide(AX, targetRulerX, 1000, function () {
-            applyStep(1)
-            wait(900, function () {
-              applyStep(2, { linePending: true })
-              animateHeightDraw(function () {
-                applyStep(2)
-                wait(1200, function () {
-                  applyStep(3)
-                  wait(1000, function () {
-                    rightAngleA.style.opacity = '1'
-                    animateRulerSlide(targetRulerX, FX, 1400, function () {
-                      applyStep(4, { linePending: true })
-                      animateHeightDraw2(function () {
-                        applyStep(4)
-                        stopPlay()
-                      })
-                    })
-                  })
-                })
+        function playFourthSegment () {
+          wait(1000, function () {
+            rightAngleA.style.opacity = '1'
+            animateRulerSlide(targetRulerX, FX, 1400, function () {
+              applyStep(4, { linePending: true })
+              animateHeightDraw2(function () {
+                applyStep(4)
+                stopPlay()
               })
             })
           })
-        })
+        }
+
+        function playFromAfterStep2Done () {
+          wait(1200, function () {
+            applyStep(3)
+            playFourthSegment()
+          })
+        }
+
+        function playFromAfterStep1 () {
+          wait(900, function () {
+            applyStep(2, { linePending: true })
+            animateHeightDraw(function () {
+              applyStep(2)
+              playFromAfterStep2Done()
+            })
+          })
+        }
+
+        function playFromStart () {
+          applyStep(0)
+          wait(500, function () {
+            animateRulerSlide(AX, targetRulerX, 1000, function () {
+              applyStep(1)
+              playFromAfterStep1()
+            })
+          })
+        }
+
+        switch (stepIndex) {
+          case 0:
+            playFromStart()
+            break
+          case 1:
+            applyStep(1)
+            playFromAfterStep1()
+            break
+          case 2:
+            applyStep(2)
+            playFromAfterStep2Done()
+            break
+          case 3:
+            applyStep(3)
+            playFourthSegment()
+            break
+          case 4:
+            applyStep(4)
+            stopPlay()
+            break
+          default:
+            playFromStart()
+        }
       }
 
       function stopPlay () {
