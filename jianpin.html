@@ -711,6 +711,144 @@
         }
       }
 
+      /** 拖拽结束后：若某边与另一块某边几乎重合且长度一致，则平移当前块使两边贴合 */
+      const EDGE_SNAP_LEN_TOL = 1.5
+      const EDGE_SNAP_GAP_MAX = 5
+      const EDGE_SNAP_VERIFY = 3
+      const EDGE_SNAP_MIN_LEN = 3
+
+      function pointSegmentDist2 (px, py, ax, ay, bx, by) {
+        const abx = bx - ax
+        const aby = by - ay
+        const apx = px - ax
+        const apy = py - ay
+        const abLen2 = abx * abx + aby * aby
+        if (abLen2 < 1e-12) {
+          return (px - ax) * (px - ax) + (py - ay) * (py - ay)
+        }
+        let t = (apx * abx + apy * aby) / abLen2
+        if (t < 0) t = 0
+        else if (t > 1) t = 1
+        const qx = ax + t * abx
+        const qy = ay + t * aby
+        const dx = px - qx
+        const dy = py - qy
+        return dx * dx + dy * dy
+      }
+
+      function segmentSegmentDistanceApprox (ax, ay, bx, by, cx, cy, dx, dy) {
+        const steps = 20
+        let minD = Infinity
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps
+          const px = ax + t * (bx - ax)
+          const py = ay + t * (by - ay)
+          minD = Math.min(minD, pointSegmentDist2(px, py, cx, cy, dx, dy))
+        }
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps
+          const px = cx + t * (dx - cx)
+          const py = cy + t * (dy - cy)
+          minD = Math.min(minD, pointSegmentDist2(px, py, ax, ay, bx, by))
+        }
+        return Math.sqrt(minD)
+      }
+
+      function snapPieceEdgesAfterDrag (movedIdx) {
+        if (polyPieces.length < 2) return
+        if (movedIdx < 0 || movedIdx >= polyPieces.length) return
+        const moved = polyPieces[movedIdx]
+        const vtx = moved.verts
+        const n = vtx.length
+        const tx =
+          (moved.baseTx != null ? moved.baseTx : 0) + (moved.userDx || 0)
+        const ty =
+          (moved.baseTy != null ? moved.baseTy : 0) + (moved.userDy || 0)
+
+        let bestGap = Infinity
+        let bestDdx = 0
+        let bestDdy = 0
+        let found = false
+
+        for (let ei = 0; ei < n; ei++) {
+          const a0 = vtx[ei]
+          const a1 = vtx[(ei + 1) % n]
+          const wa0x = a0.x + tx
+          const wa0y = a0.y + ty
+          const wa1x = a1.x + tx
+          const wa1y = a1.y + ty
+          const lenA = Math.hypot(wa1x - wa0x, wa1y - wa0y)
+          if (lenA < EDGE_SNAP_MIN_LEN) continue
+
+          for (let j = 0; j < polyPieces.length; j++) {
+            if (j === movedIdx) continue
+            const other = polyPieces[j]
+            const txj =
+              (other.baseTx != null ? other.baseTx : 0) +
+              (other.userDx || 0)
+            const tyj =
+              (other.baseTy != null ? other.baseTy : 0) +
+              (other.userDy || 0)
+            const vj = other.verts
+            const nj = vj.length
+            for (let ej = 0; ej < nj; ej++) {
+              const b0 = vj[ej]
+              const b1 = vj[(ej + 1) % nj]
+              const wb0x = b0.x + txj
+              const wb0y = b0.y + tyj
+              const wb1x = b1.x + txj
+              const wb1y = b1.y + tyj
+              const lenB = Math.hypot(wb1x - wb0x, wb1y - wb0y)
+              if (lenB < EDGE_SNAP_MIN_LEN) continue
+              if (Math.abs(lenA - lenB) > EDGE_SNAP_LEN_TOL) continue
+
+              const gap = segmentSegmentDistanceApprox(
+                wa0x,
+                wa0y,
+                wa1x,
+                wa1y,
+                wb0x,
+                wb0y,
+                wb1x,
+                wb1y
+              )
+              if (gap > EDGE_SNAP_GAP_MAX) continue
+
+              const trySnap = function (ddx, ddy, sameDir) {
+                const wa0px = wa0x + ddx
+                const wa0py = wa0y + ddy
+                const wa1px = wa1x + ddx
+                const wa1py = wa1y + ddy
+                let ok = false
+                if (sameDir) {
+                  ok =
+                    Math.hypot(wa0px - wb0x, wa0py - wb0y) < EDGE_SNAP_VERIFY &&
+                    Math.hypot(wa1px - wb1x, wa1py - wb1y) < EDGE_SNAP_VERIFY
+                } else {
+                  ok =
+                    Math.hypot(wa0px - wb1x, wa0py - wb1y) < EDGE_SNAP_VERIFY &&
+                    Math.hypot(wa1px - wb0x, wa1py - wb0y) < EDGE_SNAP_VERIFY
+                }
+                if (ok && gap < bestGap) {
+                  bestGap = gap
+                  bestDdx = ddx
+                  bestDdy = ddy
+                  found = true
+                }
+              }
+
+              trySnap(wb0x - wa0x, wb0y - wa0y, true)
+              trySnap(wb1x - wa0x, wb1y - wa0y, false)
+            }
+          }
+        }
+
+        if (found) {
+          moved.userDx = (moved.userDx || 0) + bestDdx
+          moved.userDy = (moved.userDy || 0) + bestDdy
+        }
+      }
+
       /** 左块多边形局部坐标下的水平中心（不含 group transform），用于箭头尾 */
       function getLeftPieceBoundingCenterXLocal () {
         if (polyPieces.length === 0) {
@@ -992,12 +1130,17 @@
       function onPiecePointerUp (e) {
         if (!pieceDrag) return
         const g = pieceDrag.g
+        const movedIdx = pieceDrag.pieceIndex
         removeLeftDragArrows()
+        if (isCut && polyPieces.length >= 2) {
+          snapPieceEdgesAfterDrag(movedIdx)
+        }
         pieceDrag = null
         g.classList.remove('is-dragging')
         try {
           if (e.pointerId != null) g.releasePointerCapture(e.pointerId)
         } catch (err) { /* ignore */ }
+        applyAllPieceTransforms()
       }
 
       function resetDemo () {
