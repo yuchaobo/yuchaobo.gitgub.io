@@ -1,0 +1,2139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GG</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    html {
+      zoom: 1.1;
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: system-ui, sans-serif;
+      background: #fdf8e8;
+      color: #1a1a1e;
+    }
+    .page {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 100vh;
+      padding: 12px;
+      gap: 12px;
+      background: #fdf8e8;
+    }
+    .canvas-wrap {
+      flex: 1;
+      min-height: 200px;
+      display: flex;
+      align-items: stretch;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #e0e0e0;
+      background: #ffffff;
+    }
+    #mainCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+    .controls {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 24px;
+      min-height: 104px;
+      padding: 12px 0;
+    }
+    .palette-item {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 88px;
+      height: 88px;
+      border: 1px solid #d0d0d0;
+      border-radius: 6px;
+      background: #fff;
+      cursor: grab;
+      user-select: none;
+      -webkit-user-drag: element;
+    }
+    .palette-item:active {
+      cursor: grabbing;
+    }
+    .palette-item--label {
+      font-size: 1.1rem;
+      font-weight: normal;
+      color: #4a3728;
+      letter-spacing: 0.12em;
+      cursor: pointer;
+    }
+    .palette-item--compass.active {
+      outline: 2px solid #4a6fa5;
+      outline-offset: 2px;
+    }
+    .palette-item--redline {
+      font-size: 1.05rem;
+      color: #b71c1c;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+    }
+    .palette-item--redline.active {
+      outline: 2px solid #c62828;
+      outline-offset: 2px;
+    }
+    .palette-item--clear {
+      letter-spacing: 0.12em;
+      -webkit-user-drag: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="canvas-wrap">
+      <canvas id="mainCanvas" width="800" height="600"></canvas>
+    </div>
+    <div class="controls" aria-label="控件区域">
+      <div
+        class="palette-item"
+        draggable="true"
+        data-shape="triangle"
+        title="直角三角形（拖到画布）；画布上可拖动"
+        aria-label="直角三角形"
+      ></div>
+      <div
+        class="palette-item"
+        draggable="true"
+        data-shape="leaf"
+        title="叶形轮廓（拖到画布）；画布上可拖动"
+        aria-label="叶形"
+      ></div>
+      <div
+        class="palette-item palette-item--label"
+        data-shape="ruler"
+        role="button"
+        tabindex="0"
+        title="点击在画布上显示直尺，再点击隐藏；轻点直尺切换角度，拖动可移动"
+        aria-label="直尺"
+      >直尺</div>
+      <div
+        class="palette-item palette-item--label palette-item--compass"
+        id="paletteCompass"
+        role="button"
+        tabindex="0"
+        title="先点此进入放置模式，再在画布空白处点击放置圆规；画布上轻点圆规铰链或腿身可循环角度（与直尺相同三向），拖动移动，拖动腿尖张合；下方实线辅助线：首次两脚靠近松手吸附并记下两点，之后须将左脚尖移到上一右脚标记附近再松手，左脚落在该点、记下新右脚点（可继续得到第四、五点…）；贴近三角形边时也会自动对齐；首次放置后出现该辅助线"
+        aria-label="圆规"
+      >圆规</div>
+      <div
+        class="palette-item palette-item--label palette-item--redline"
+        id="paletteRedLine"
+        role="button"
+        tabindex="0"
+        title="点击进入绘制模式，在画布空白处按住拖动绘制红色线条；松手后根据与轮廓的平均距离选取最近的三角形、叶形或直尺，并将线条替换为该图形外缘完整一圈。点击仍带吸附标记的红线可化曲为直（长度与贴合周长相同），并水平居中移到该图形正下方"
+        aria-label="红线"
+      >红线</div>
+      <div
+        class="palette-item palette-item--label palette-item--clear"
+        id="paletteClear"
+        role="button"
+        tabindex="0"
+        title="清空画布：移除三角形、叶形、直尺、圆规、红线及辅助线标记"
+        aria-label="清除"
+      >清除</div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const canvas = document.getElementById("mainCanvas");
+      const wrap = canvas.parentElement;
+      const STROKE = "#1a1a1e";
+      const GRID = "#e8e8e8";
+
+      /** 直角在左上，三边长 3:4:5（左侧竖边 3k、顶边 4k、斜边 5k） */
+      const TRI_K = 60;
+      const TRI_LEG_LEFT = 3 * TRI_K;
+      const TRI_LEG_TOP = 4 * TRI_K;
+      /** 叶形在 0–100 归一化坐标内绘制，外接约 86×89；等比缩放后装入此框（画布上为预览控件的 2.5 倍） */
+      const LEAF_W = 200;
+      const LEAF_H = 207.5;
+
+      /** 画布上 1 cm 的像素长度，与三角形直角边 3k、4k、斜边 5k（k=60）一致，可用直尺读出 3、4、5 cm */
+      const PX_PER_CM = TRI_K;
+      const RULER_MAX_CM = 15;
+      const RULER_SCALE_W = RULER_MAX_CM * PX_PER_CM;
+      const RULER_MARGIN_X = 12;
+      const RULER_W = RULER_SCALE_W + 2 * RULER_MARGIN_X;
+      const RULER_H = 56;
+      const RULER_FILL = "#f8f0e0";
+      const RULER_BROWN = "#4a3728";
+      const RULER_RADIUS = 8;
+      const RULER_OUTER_BORDER = "#c4b8aa";
+      /** 直尺旋转：水平、竖直、与 3:4:5 三角形斜边同向（左下→右上） */
+      const RULER_ANGLE_H = 0;
+      const RULER_ANGLE_V = Math.PI / 2;
+      const RULER_ANGLE_HYP = Math.atan2(-TRI_LEG_LEFT, TRI_LEG_TOP);
+      const RULER_ANGLES = [RULER_ANGLE_H, RULER_ANGLE_V, RULER_ANGLE_HYP];
+      /** 直尺：位移小于此值视为点击旋转，大于则视为拖动 */
+      const RULER_TAP_DRAG_THRESH = 8;
+      /** 直尺刻度边与三角形边：平行阈值与最大间距（像素） */
+      const RULER_EDGE_SNAP_DIST = 14;
+      const RULER_EDGE_PARALLEL_COS = Math.cos((12 * Math.PI) / 180);
+
+      const COMPASS_LEG_LEN = 218;
+      const COMPASS_HINGE_R = 16;
+      const COMPASS_LEG_HIT_R = 20;
+      const COMPASS_PIVOT_HIT_R = 22;
+      const COMPASS_MIN_SPREAD = 0.12;
+      const COMPASS_MAX_SPREAD = 0.82;
+      const COMPASS_GUIDE_Y_RATIO = 0.82;
+      /** 两脚 y 与辅助线差小于此值（像素）时松手可吸附到辅助线 */
+      const COMPASS_GUIDE_SNAP_Y = 30;
+      /** 链式吸附：当前左脚尖距「上一右脚标记」的最大距离（像素） */
+      const COMPASS_GUIDE_CHAIN_HIT = 44;
+      /** 腿尖到三角形边的距离小于此值且铰链接近解时，松手吸附到该边两端 */
+      const COMPASS_EDGE_SNAP_TIP = 34;
+      const COMPASS_EDGE_SNAP_HINGE_MAX = 68;
+
+      const REDLINE_STROKE_WIDTH = 3;
+      const REDLINE_COLOR = "#c62828";
+      const REDLINE_SAMPLE_STEP = 3;
+      /** 点击贴合红线：与折线的最大距离（像素） */
+      const REDLINE_HIT_DIST = 12;
+      /** 化直后放在图形底边下方的间距 */
+      const REDLINE_BELOW_GAP = 10;
+
+      let dpr = 1;
+      let cssW = 0;
+      let cssH = 0;
+
+      /**
+       * @type {{
+       *   id: number;
+       *   type: string;
+       *   x: number;
+       *   y: number;
+       *   angle?: number;
+       * }[]}
+       */
+      const shapes = [];
+      let nextId = 1;
+
+      /** 已用直尺贴边标过的三角形边 `三角形id-边索引(0顶/1左/2斜)`，移走直尺后仍显示，随三角形移动更新位置 */
+      const persistedEdgeHintKeys = new Set();
+
+      let dragShapeId = null;
+      let dragOffsetX = 0;
+      let dragOffsetY = 0;
+      /** @type {{ x0: number, y0: number, moved: boolean } | null} */
+      let rulerTap = null;
+      /** 圆规铰链/腿身轻点旋转（阈值同直尺），拖动则平移 */
+      /** @type {{ x0: number, y0: number, moved: boolean } | null} */
+      let compassTap = null;
+      let placeCompassMode = false;
+      let drawRedLineMode = false;
+      /** @type {{ points: { x: number; y: number }[]; pointerId: number } | null} */
+      let redLineStroke = null;
+      let bottomGuideLineShown = false;
+      /** 吸附到辅助线后各脚位 x（首两次为第一次左右尖，之后每次追加新右脚尖；不移除） */
+      /** @type {number[]} */
+      let guideLineMarkXs = [];
+      /** @type {"L" | "R" | null} */
+      let compassLegDrag = null;
+      let lastHoverCss = { x: 0, y: 0 };
+
+      const scratch = document.createElement("canvas");
+      const sctx = scratch.getContext("2d");
+
+      function trianglePath(ctx, topLen, leftLen) {
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(topLen, 0);
+        ctx.lineTo(0, leftLen);
+        ctx.closePath();
+      }
+
+      /**
+       * 叶形轮廓：与参考图一致的 0–100 坐标系（左上为原点，y 向下）。
+       * 关键点：底尖 (10,95) → 左肩 (20,30) → 顶 (50,7) → 右上 (90,6) →
+       * 最右 (96,40) → 腰凹 (88,55) → (85,75) → 回底尖。
+       */
+      function leafPath(ctx, w, h) {
+        const s = Math.min(w / 100, h / 100);
+        const ox = (w - 100 * s) / 2;
+        const oy = (h - 100 * s) / 2;
+        const X = function (x) {
+          return ox + x * s;
+        };
+        const Y = function (y) {
+          return oy + y * s;
+        };
+        ctx.beginPath();
+        ctx.moveTo(X(10), Y(95));
+        ctx.bezierCurveTo(X(4), Y(86), X(12), Y(50), X(20), Y(30));
+        ctx.bezierCurveTo(X(30), Y(16), X(40), Y(5), X(50), Y(7));
+        ctx.bezierCurveTo(X(62), Y(6), X(76), Y(5), X(90), Y(6));
+        ctx.bezierCurveTo(X(90), Y(16), X(94), Y(28), X(96), Y(40));
+        ctx.bezierCurveTo(X(97), Y(47), X(92), Y(52), X(88), Y(55));
+        ctx.bezierCurveTo(X(86), Y(62), X(86), Y(69), X(85), Y(75));
+        ctx.bezierCurveTo(X(68), Y(91), X(38), Y(99), X(10), Y(95));
+        ctx.closePath();
+      }
+
+      function drawTriangleStroke(ctx, topLen, leftLen) {
+        trianglePath(ctx, topLen, leftLen);
+        ctx.strokeStyle = STROKE;
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = "miter";
+        ctx.miterLimit = 3;
+        ctx.stroke();
+      }
+
+      function drawLeafStroke(ctx, w, h) {
+        leafPath(ctx, w, h);
+        ctx.strokeStyle = STROKE;
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = "miter";
+        ctx.miterLimit = 3;
+        ctx.stroke();
+      }
+
+      function rulerAabb(s) {
+        const a = s.angle || 0;
+        const c = Math.cos(a);
+        const si = Math.sin(a);
+        const hw = RULER_W / 2;
+        const hh = RULER_H / 2;
+        const corners = [
+          [-hw, -hh],
+          [hw, -hh],
+          [hw, hh],
+          [-hw, hh],
+        ];
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        for (let i = 0; i < corners.length; i++) {
+          const dx = corners[i][0];
+          const dy = corners[i][1];
+          const wx = s.x + dx * c - dy * si;
+          const wy = s.y + dx * si + dy * c;
+          minX = Math.min(minX, wx);
+          maxX = Math.max(maxX, wx);
+          minY = Math.min(minY, wy);
+          maxY = Math.max(maxY, wy);
+        }
+        return { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
+      }
+
+      /** 直尺 AABB 与水平参考线 y=gy 的竖直间距（线在带内为 0） */
+      function verticalDistRulerAabbToLine(b, gy) {
+        if (gy < b.minY) return b.minY - gy;
+        if (gy > b.maxY) return gy - b.maxY;
+        return 0;
+      }
+
+      /** 直尺贴近底部参考线：与参考线 x 段重叠、尺面近似水平、竖直距离在容差内 */
+      function rulerCloseToBottomGuideLine(s) {
+        const b = rulerAabb(s);
+        const gl = 10;
+        const gr = cssW - 10;
+        if (b.maxX < gl || b.minX > gr) return false;
+        const ang = s.angle || 0;
+        if (Math.abs(Math.sin(ang)) > 0.35) return false;
+        const gy = bottomGuideLineY();
+        return verticalDistRulerAabbToLine(b, gy) <= RULER_EDGE_SNAP_DIST;
+      }
+
+      function anyRulerCloseToBottomGuideLine() {
+        if (!bottomGuideLineShown) return false;
+        for (let i = 0; i < shapes.length; i++) {
+          if (shapes[i].type !== "ruler") continue;
+          if (rulerCloseToBottomGuideLine(shapes[i])) return true;
+        }
+        return false;
+      }
+
+      function rulerWorldToLocalRotated(s, px, py) {
+        const dx = px - s.x;
+        const dy = py - s.y;
+        const a = -(s.angle || 0);
+        const c = Math.cos(a);
+        const si = Math.sin(a);
+        return {
+          lx: dx * c - dy * si + RULER_W / 2,
+          ly: dx * si + dy * c + RULER_H / 2,
+        };
+      }
+
+      function rulerLocalToWorld(s, lx, ly) {
+        const th = s.angle || 0;
+        const u = lx - RULER_W / 2;
+        const v = ly - RULER_H / 2;
+        const dx = u * Math.cos(th) - v * Math.sin(th);
+        const dy = u * Math.sin(th) + v * Math.cos(th);
+        return { x: s.x + dx, y: s.y + dy };
+      }
+
+      function rulerHitAny(s, px, py) {
+        const b = rulerAabb(s);
+        if (px < b.minX || px > b.maxX || py < b.minY || py > b.maxY) {
+          return false;
+        }
+        const loc = rulerWorldToLocalRotated(s, px, py);
+        return (
+          loc.lx >= 0 &&
+          loc.lx <= RULER_W &&
+          loc.ly >= 0 &&
+          loc.ly <= RULER_H
+        );
+      }
+
+      function rulerHit(s, px, py) {
+        return rulerHitAny(s, px, py);
+      }
+
+      function cycleRulerAngle(s) {
+        const cur = s.angle || 0;
+        let idx = 0;
+        for (let j = 0; j < RULER_ANGLES.length; j++) {
+          if (Math.abs(cur - RULER_ANGLES[j]) < 1e-5) {
+            idx = j;
+            break;
+          }
+        }
+        idx = (idx + 1) % RULER_ANGLES.length;
+        s.angle = RULER_ANGLES[idx];
+      }
+
+      /** 与直尺相同：水平、竖直、与 3:4:5 斜边同向 */
+      function cycleCompassAngle(s) {
+        cycleRulerAngle(s);
+      }
+
+      function distPointSeg(px, py, ax, ay, bx, by) {
+        const abx = bx - ax;
+        const aby = by - ay;
+        const apx = px - ax;
+        const apy = py - ay;
+        const ab2 = abx * abx + aby * aby;
+        let t = ab2 < 1e-10 ? 0 : (apx * abx + apy * aby) / ab2;
+        t = Math.max(0, Math.min(1, t));
+        const qx = ax + t * abx;
+        const qy = ay + t * aby;
+        return Math.hypot(px - qx, py - qy);
+      }
+
+      function segSegMinApprox(ax, ay, bx, by, cx, cy, dx, dy) {
+        return Math.min(
+          distPointSeg(ax, ay, cx, cy, dx, dy),
+          distPointSeg(bx, by, cx, cy, dx, dy),
+          distPointSeg(cx, cy, ax, ay, bx, by),
+          distPointSeg(dx, dy, ax, ay, bx, by)
+        );
+      }
+
+      function nearlyParallel(ax, ay, bx, by, cx, cy, dx, dy) {
+        let ux = bx - ax;
+        let uy = by - ay;
+        let vx = dx - cx;
+        let vy = dy - cy;
+        const lu = Math.hypot(ux, uy);
+        const lv = Math.hypot(vx, vy);
+        if (lu < 1e-6 || lv < 1e-6) return false;
+        ux /= lu;
+        uy /= lu;
+        vx /= lv;
+        vy /= lv;
+        return Math.abs(ux * vx + uy * vy) >= RULER_EDGE_PARALLEL_COS;
+      }
+
+      function triangleEdgesWorld(t) {
+        const x = t.x;
+        const y = t.y;
+        return [
+          { ax: x, ay: y, bx: x + TRI_LEG_TOP, by: y, cmPx: TRI_LEG_TOP },
+          { ax: x, ay: y, bx: x, by: y + TRI_LEG_LEFT, cmPx: TRI_LEG_LEFT },
+          {
+            ax: x + TRI_LEG_TOP,
+            ay: y,
+            bx: x,
+            by: y + TRI_LEG_LEFT,
+            cmPx: Math.hypot(TRI_LEG_TOP, TRI_LEG_LEFT),
+          },
+        ];
+      }
+
+      function layoutHintForTriangleEdge(t, ei) {
+        const edges = triangleEdgesWorld(t);
+        const e = edges[ei];
+        const mx = (e.ax + e.bx) / 2;
+        const my = (e.ay + e.by) / 2;
+        const gx = t.x + TRI_LEG_TOP / 3;
+        const gy = t.y + TRI_LEG_LEFT / 3;
+        const ex = e.bx - e.ax;
+        const ey = e.by - e.ay;
+        const el = Math.hypot(ex, ey) || 1;
+        let nx = -ey / el;
+        let ny = ex / el;
+        if ((gx - mx) * nx + (gy - my) * ny > 0) {
+          nx = -nx;
+          ny = -ny;
+        }
+        const cm = Math.round(e.cmPx / PX_PER_CM);
+        return {
+          ox: mx + nx * 18,
+          oy: my + ny * 18,
+          ang: Math.atan2(ey, ex),
+          text: String(cm) + " cm",
+        };
+      }
+
+      function tryAddRulerTriangleAlignmentHints() {
+        const rulers = shapes.filter(function (s) {
+          return s.type === "ruler";
+        });
+        const tris = shapes.filter(function (s) {
+          return s.type === "triangle";
+        });
+        for (let ri = 0; ri < rulers.length; ri++) {
+          const r = rulers[ri];
+          const p0 = rulerLocalToWorld(r, 0, 0);
+          const p1 = rulerLocalToWorld(r, RULER_W, 0);
+          for (let ti = 0; ti < tris.length; ti++) {
+            const t = tris[ti];
+            const edges = triangleEdgesWorld(t);
+            for (let ei = 0; ei < edges.length; ei++) {
+              const e = edges[ei];
+              if (
+                !nearlyParallel(
+                  p0.x,
+                  p0.y,
+                  p1.x,
+                  p1.y,
+                  e.ax,
+                  e.ay,
+                  e.bx,
+                  e.by
+                )
+              ) {
+                continue;
+              }
+              const d = segSegMinApprox(
+                p0.x,
+                p0.y,
+                p1.x,
+                p1.y,
+                e.ax,
+                e.ay,
+                e.bx,
+                e.by
+              );
+              if (d > RULER_EDGE_SNAP_DIST) continue;
+              persistedEdgeHintKeys.add(String(t.id) + "-" + ei);
+            }
+          }
+        }
+      }
+
+      function prunePersistedEdgeHints() {
+        const triIds = new Set();
+        for (let i = 0; i < shapes.length; i++) {
+          if (shapes[i].type === "triangle") {
+            triIds.add(shapes[i].id);
+          }
+        }
+        const keys = Array.from(persistedEdgeHintKeys);
+        for (let i = 0; i < keys.length; i++) {
+          const tid = parseInt(keys[i].split("-")[0], 10);
+          if (!triIds.has(tid)) {
+            persistedEdgeHintKeys.delete(keys[i]);
+          }
+        }
+      }
+
+      function buildPersistedLengthHintsForDraw() {
+        const list = [];
+        persistedEdgeHintKeys.forEach(function (key) {
+          const parts = key.split("-");
+          const tid = parseInt(parts[0], 10);
+          const ei = parseInt(parts[1], 10);
+          const t = shapes.find(function (s) {
+            return s.id === tid && s.type === "triangle";
+          });
+          if (!t) return;
+          list.push(layoutHintForTriangleEdge(t, ei));
+        });
+        return list;
+      }
+
+      function drawLengthHints(ctx, hints) {
+        for (let i = 0; i < hints.length; i++) {
+          const h = hints[i];
+          ctx.save();
+          ctx.translate(h.ox, h.oy);
+          let ang = h.ang;
+          if (ang > Math.PI / 2 || ang < -Math.PI / 2) {
+            ang += Math.PI;
+          }
+          ctx.rotate(ang);
+          ctx.font = "600 15px system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.strokeStyle = "rgba(255,255,255,0.95)";
+          ctx.fillStyle = "#1a4d72";
+          ctx.lineWidth = 4;
+          ctx.lineJoin = "round";
+          ctx.miterLimit = 2;
+          ctx.strokeText(h.text, 0, 0);
+          ctx.fillText(h.text, 0, 0);
+          ctx.restore();
+        }
+      }
+
+      function triangleHasAllThreeEdgeHints(tid) {
+        const p = String(tid) + "-";
+        return (
+          persistedEdgeHintKeys.has(p + "0") &&
+          persistedEdgeHintKeys.has(p + "1") &&
+          persistedEdgeHintKeys.has(p + "2")
+        );
+      }
+
+      function drawTrianglePerimeterFormulas(ctx) {
+        for (let i = 0; i < shapes.length; i++) {
+          const t = shapes[i];
+          if (t.type !== "triangle") continue;
+          if (!triangleHasAllThreeEdgeHints(t.id)) continue;
+          const cx = t.x + TRI_LEG_TOP / 2;
+          const by = t.y + TRI_LEG_LEFT + 20;
+          ctx.save();
+          ctx.font = "600 16px system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          ctx.strokeStyle = "rgba(255,255,255,0.92)";
+          ctx.fillStyle = "#3d2a18";
+          ctx.lineWidth = 3;
+          ctx.lineJoin = "round";
+          const text = "3+4+5=12(cm)";
+          ctx.strokeText(text, cx, by);
+          ctx.fillText(text, cx, by);
+          ctx.restore();
+        }
+      }
+
+      /**
+       * 在局部坐标 (0,0)–(w,h) 内绘制直尺；w 与 h 为整块外观尺寸（含左右留白）。
+       */
+      function drawRulerFace(ctx, w, h, pxPerCm, maxCm) {
+        const rr = Math.min(RULER_RADIUS, h / 3, w / 25);
+        const scaleW = maxCm * pxPerCm;
+        const mx = (w - scaleW) / 2;
+        const iy = 2;
+
+        ctx.beginPath();
+        if (typeof ctx.roundRect === "function") {
+          ctx.roundRect(0.5, 0.5, w - 1, h - 1, rr);
+        } else {
+          ctx.rect(0.5, 0.5, w - 1, h - 1);
+        }
+        ctx.fillStyle = RULER_FILL;
+        ctx.fill();
+        ctx.strokeStyle = RULER_OUTER_BORDER;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        const tickTop = iy + 4;
+        const majorH = Math.min(18, h * 0.34);
+        const midH = majorH * 0.62;
+        const minorH = majorH * 0.35;
+        const mmStep = pxPerCm / 10;
+        const totalMm = Math.round(maxCm * 10);
+
+        ctx.strokeStyle = RULER_BROWN;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i <= totalMm; i++) {
+          const x = mx + i * mmStep;
+          if (x > mx + scaleW + 0.001) break;
+          let th = minorH;
+          if (i % 10 === 0) th = majorH;
+          else if (i % 5 === 0) th = midH;
+          ctx.moveTo(x, tickTop);
+          ctx.lineTo(x, tickTop + th);
+        }
+        ctx.stroke();
+
+        ctx.fillStyle = RULER_BROWN;
+        ctx.font =
+          "600 " + Math.max(9, Math.min(13, h * 0.22)) + "px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const numY = h - Math.max(11, h * 0.24);
+        for (let cm = 0; cm <= maxCm; cm++) {
+          const x = mx + cm * pxPerCm;
+          if (x > mx + scaleW + 0.5) break;
+          ctx.fillText(String(cm), x, numY);
+        }
+      }
+
+      function drawRulerStroke(ctx, s) {
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(s.angle || 0);
+        ctx.translate(-RULER_W / 2, -RULER_H / 2);
+        drawRulerFace(ctx, RULER_W, RULER_H, PX_PER_CM, RULER_MAX_CM);
+        ctx.restore();
+      }
+
+      function compassLocalVectorFromWorld(s, wx, wy) {
+        const th = s.angle || 0;
+        const dx = wx - s.x;
+        const dy = wy - s.y;
+        return {
+          lx: dx * Math.cos(-th) - dy * Math.sin(-th),
+          ly: dx * Math.sin(-th) + dy * Math.cos(-th),
+        };
+      }
+
+      function compassFootLocal(s, side) {
+        const sp = Math.max(
+          COMPASS_MIN_SPREAD,
+          Math.min(COMPASS_MAX_SPREAD, s.spread != null ? s.spread : 0.38)
+        );
+        const L = COMPASS_LEG_LEN;
+        if (side === "L") {
+          return { lx: Math.sin(-sp) * L, ly: Math.cos(-sp) * L };
+        }
+        return { lx: Math.sin(sp) * L, ly: Math.cos(sp) * L };
+      }
+
+      function compassLocalToWorld(s, lx, ly) {
+        const th = s.angle || 0;
+        return {
+          x: s.x + lx * Math.cos(th) - ly * Math.sin(th),
+          y: s.y + lx * Math.sin(th) + ly * Math.cos(th),
+        };
+      }
+
+      function compassHitRegion(s, px, py) {
+        const fL = compassFootLocal(s, "L");
+        const fR = compassFootLocal(s, "R");
+        const wL = compassLocalToWorld(s, fL.lx, fL.ly);
+        const wR = compassLocalToWorld(s, fR.lx, fR.ly);
+        if (Math.hypot(px - wL.x, py - wL.y) <= COMPASS_LEG_HIT_R) {
+          return "L";
+        }
+        if (Math.hypot(px - wR.x, py - wR.y) <= COMPASS_LEG_HIT_R) {
+          return "R";
+        }
+        if (Math.hypot(px - s.x, py - s.y) <= COMPASS_PIVOT_HIT_R) {
+          return "body";
+        }
+        const dL = distPointSeg(px, py, s.x, s.y, wL.x, wL.y);
+        const dR = distPointSeg(px, py, s.x, s.y, wR.x, wR.y);
+        if (dL <= 10 || dR <= 10) {
+          return "body";
+        }
+        return null;
+      }
+
+      function compassUpdateSpreadFromPointer(s, px, py, side) {
+        const v = compassLocalVectorFromWorld(s, px, py);
+        const a = Math.atan2(v.lx, v.ly);
+        if (side === "L") {
+          s.spread = Math.max(
+            COMPASS_MIN_SPREAD,
+            Math.min(COMPASS_MAX_SPREAD, -a)
+          );
+        } else {
+          s.spread = Math.max(
+            COMPASS_MIN_SPREAD,
+            Math.min(COMPASS_MAX_SPREAD, a)
+          );
+        }
+      }
+
+      function triangleVertsWorld(tri) {
+        return [
+          { x: tri.x, y: tri.y },
+          { x: tri.x + TRI_LEG_TOP, y: tri.y },
+          { x: tri.x, y: tri.y + TRI_LEG_LEFT },
+        ];
+      }
+
+      function cubicBezierPoint(ax, ay, bx, by, cx, cy, dx, dy, t) {
+        const omt = 1 - t;
+        const omt2 = omt * omt;
+        const t2 = t * t;
+        return {
+          x:
+            omt2 * omt * ax +
+            3 * omt2 * t * bx +
+            3 * omt * t2 * cx +
+            t2 * t * dx,
+          y:
+            omt2 * omt * ay +
+            3 * omt2 * t * by +
+            3 * omt * t2 * cy +
+            t2 * t * dy,
+        };
+      }
+
+      function leafOutlineVertsLocal(w, h) {
+        const s = Math.min(w / 100, h / 100);
+        const ox = (w - 100 * s) / 2;
+        const oy = (h - 100 * s) / 2;
+        function X(x) {
+          return ox + x * s;
+        }
+        function Y(y) {
+          return oy + y * s;
+        }
+        const segs = [
+          [10, 95, 4, 86, 12, 50, 20, 30],
+          [20, 30, 30, 16, 40, 5, 50, 7],
+          [50, 7, 62, 6, 76, 5, 90, 6],
+          [90, 6, 90, 16, 94, 28, 96, 40],
+          [96, 40, 97, 47, 92, 52, 88, 55],
+          [88, 55, 86, 62, 86, 69, 85, 75],
+          [85, 75, 68, 91, 38, 99, 10, 95],
+        ];
+        const out = [];
+        const stepsPerSeg = 28;
+        for (let si = 0; si < segs.length; si++) {
+          const g = segs[si];
+          const ax = X(g[0]);
+          const ay = Y(g[1]);
+          const bx = X(g[2]);
+          const by = Y(g[3]);
+          const cx = X(g[4]);
+          const cy = Y(g[5]);
+          const dx = X(g[6]);
+          const dy = Y(g[7]);
+          for (let k = 0; k <= stepsPerSeg; k++) {
+            const t = stepsPerSeg <= 0 ? 0 : k / stepsPerSeg;
+            const pt = cubicBezierPoint(ax, ay, bx, by, cx, cy, dx, dy, t);
+            if (out.length > 0) {
+              const last = out[out.length - 1];
+              if (
+                Math.hypot(pt.x - last.x, pt.y - last.y) < 0.35
+              ) {
+                continue;
+              }
+            }
+            out.push(pt);
+          }
+        }
+        return out;
+      }
+
+      function leafOutlineVertsWorld(leaf) {
+        const loc = leafOutlineVertsLocal(LEAF_W, LEAF_H);
+        const out = [];
+        for (let i = 0; i < loc.length; i++) {
+          out.push({ x: leaf.x + loc[i].x, y: leaf.y + loc[i].y });
+        }
+        return out;
+      }
+
+      function rulerOutlineVertsWorld(r) {
+        const pts = [];
+        const corners = [
+          [0, 0],
+          [RULER_W, 0],
+          [RULER_W, RULER_H],
+          [0, RULER_H],
+        ];
+        for (let i = 0; i < corners.length; i++) {
+          const w = rulerLocalToWorld(r, corners[i][0], corners[i][1]);
+          pts.push({ x: w.x, y: w.y });
+        }
+        return pts;
+      }
+
+      function shapeOutlineVertsWorld(s) {
+        if (s.type === "triangle") {
+          return triangleVertsWorld(s);
+        }
+        if (s.type === "leaf") {
+          return leafOutlineVertsWorld(s);
+        }
+        if (s.type === "ruler") {
+          return rulerOutlineVertsWorld(s);
+        }
+        return null;
+      }
+
+      function polylineClosedLength(verts) {
+        let L = 0;
+        const n = verts.length;
+        for (let i = 0; i < n; i++) {
+          const a = verts[i];
+          const b = verts[(i + 1) % n];
+          L += Math.hypot(b.x - a.x, b.y - a.y);
+        }
+        return L;
+      }
+
+      function closestOnClosedPolyline(px, py, verts) {
+        const n = verts.length;
+        let bestX = px;
+        let bestY = py;
+        let bestD = 1e9;
+        let bestS = 0;
+        let acc = 0;
+        for (let i = 0; i < n; i++) {
+          const ax = verts[i].x;
+          const ay = verts[i].y;
+          const bx = verts[(i + 1) % n].x;
+          const by = verts[(i + 1) % n].y;
+          const abx = bx - ax;
+          const aby = by - ay;
+          const apx = px - ax;
+          const apy = py - ay;
+          const ab2 = abx * abx + aby * aby;
+          let t = ab2 < 1e-10 ? 0 : (apx * abx + apy * aby) / ab2;
+          t = Math.max(0, Math.min(1, t));
+          const qx = ax + t * abx;
+          const qy = ay + t * aby;
+          const d = Math.hypot(px - qx, py - qy);
+          const segLen = Math.sqrt(ab2);
+          const sHere = acc + t * segLen;
+          if (d < bestD) {
+            bestD = d;
+            bestX = qx;
+            bestY = qy;
+            bestS = sHere;
+          }
+          acc += segLen;
+        }
+        return { x: bestX, y: bestY, s: bestS, total: acc };
+      }
+
+      function wrapTau(tau, total) {
+        let t = tau % total;
+        if (t < 0) t += total;
+        return t;
+      }
+
+      function pointAtTau(verts, tau, totalLen) {
+        const n = verts.length;
+        let acc = 0;
+        const t = wrapTau(tau, totalLen);
+        for (let i = 0; i < n; i++) {
+          const ax = verts[i].x;
+          const ay = verts[i].y;
+          const bx = verts[(i + 1) % n].x;
+          const by = verts[(i + 1) % n].y;
+          const sl = Math.hypot(bx - ax, by - ay);
+          if (acc + sl >= t - 1e-6) {
+            const u = sl < 1e-10 ? 0 : (t - acc) / sl;
+            return {
+              x: ax + u * (bx - ax),
+              y: ay + u * (by - ay),
+            };
+          }
+          acc += sl;
+        }
+        return { x: verts[0].x, y: verts[0].y };
+      }
+
+      /**
+       * 沿闭合外轮廓整周等弧长采样，首尾闭合。
+       */
+      function fullPerimeterPolyline(verts, stepPx) {
+        const total = polylineClosedLength(verts);
+        if (total < 1e-6) return [];
+        const out = [];
+        let d = 0;
+        while (d < total - 1e-9) {
+          out.push(pointAtTau(verts, d, total));
+          d += stepPx;
+        }
+        if (out.length === 0) {
+          out.push(pointAtTau(verts, 0, total));
+        }
+        out.push({ x: out[0].x, y: out[0].y });
+        return out;
+      }
+
+      function meanStrokeDistToOutline(pts, verts) {
+        let sum = 0;
+        for (let i = 0; i < pts.length; i++) {
+          const c = closestOnClosedPolyline(pts[i].x, pts[i].y, verts);
+          sum += Math.hypot(pts[i].x - c.x, pts[i].y - c.y);
+        }
+        return sum / pts.length;
+      }
+
+      function snapRedlineToNearestShape(rl) {
+        const pts = rl.points;
+        if (pts.length < 2) return;
+        let best = null;
+        let bestId = null;
+        let bestScore = 1e9;
+        for (let i = 0; i < shapes.length; i++) {
+          const sh = shapes[i];
+          if (sh.type === "redline" || sh.type === "compass") continue;
+          const verts = shapeOutlineVertsWorld(sh);
+          if (!verts || verts.length < 3) continue;
+          const sc = meanStrokeDistToOutline(pts, verts);
+          if (sc < bestScore) {
+            bestScore = sc;
+            best = verts;
+            bestId = sh.id;
+          }
+        }
+        if (best) {
+          rl.points = fullPerimeterPolyline(best, REDLINE_SAMPLE_STEP);
+          rl.snappedToId = bestId;
+        }
+      }
+
+      function distPointToPolyline(px, py, points) {
+        if (!points || points.length < 2) return 1e9;
+        let best = 1e9;
+        for (let i = 0; i < points.length - 1; i++) {
+          const a = points[i];
+          const b = points[i + 1];
+          best = Math.min(
+            best,
+            distPointSeg(px, py, a.x, a.y, b.x, b.y)
+          );
+        }
+        const a0 = points[points.length - 1];
+        const b0 = points[0];
+        if (a0 !== b0 && (a0.x !== b0.x || a0.y !== b0.y)) {
+          best = Math.min(
+            best,
+            distPointSeg(px, py, a0.x, a0.y, b0.x, b0.y)
+          );
+        }
+        return best;
+      }
+
+      function shapeWorldAabb(s) {
+        if (s.type === "triangle") {
+          return {
+            minX: s.x,
+            maxX: s.x + TRI_LEG_TOP,
+            minY: s.y,
+            maxY: s.y + TRI_LEG_LEFT,
+          };
+        }
+        if (s.type === "leaf") {
+          return {
+            minX: s.x,
+            maxX: s.x + LEAF_W,
+            minY: s.y,
+            maxY: s.y + LEAF_H,
+          };
+        }
+        if (s.type === "ruler") {
+          return rulerAabb(s);
+        }
+        if (s.type === "compass") {
+          const tips = compassTipsWorld(s);
+          let minX = Math.min(s.x, tips.L.x, tips.R.x);
+          let maxX = Math.max(s.x, tips.L.x, tips.R.x);
+          let minY = Math.min(s.y, tips.L.y, tips.R.y);
+          let maxY = Math.max(s.y, tips.L.y, tips.R.y);
+          const pad = COMPASS_HINGE_R + 6;
+          return {
+            minX: minX - pad,
+            maxX: maxX + pad,
+            minY: minY - pad,
+            maxY: maxY + pad,
+          };
+        }
+        return null;
+      }
+
+      function polylineTotalLength(points) {
+        if (!points || points.length < 2) return 0;
+        let L = 0;
+        for (let i = 0; i < points.length - 1; i++) {
+          L += Math.hypot(
+            points[i + 1].x - points[i].x,
+            points[i + 1].y - points[i].y
+          );
+        }
+        return L;
+      }
+
+      function straightenRedlineBelowShape(rl, target) {
+        const totalLen = polylineTotalLength(rl.points);
+        if (totalLen < 1e-3) return;
+        const b = shapeWorldAabb(target);
+        if (!b) return;
+        const y = b.maxY + REDLINE_BELOW_GAP;
+        const midX = (b.minX + b.maxX) * 0.5;
+        const half = totalLen * 0.5;
+        rl.points = [
+          { x: midX - half, y: y },
+          { x: midX + half, y: y },
+        ];
+        delete rl.snappedToId;
+      }
+
+      function drawRedLineShape(ctx, rl) {
+        const pts = rl.points;
+        if (!pts || pts.length < 1) return;
+        ctx.save();
+        ctx.strokeStyle = REDLINE_COLOR;
+        ctx.fillStyle = REDLINE_COLOR;
+        ctx.lineWidth = REDLINE_STROKE_WIDTH;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        if (pts.length === 1) {
+          ctx.beginPath();
+          ctx.arc(pts[0].x, pts[0].y, 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          return;
+        }
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) {
+          ctx.lineTo(pts[i].x, pts[i].y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function compassTipsWorld(s) {
+        const fL = compassFootLocal(s, "L");
+        const fR = compassFootLocal(s, "R");
+        return {
+          L: compassLocalToWorld(s, fL.lx, fL.ly),
+          R: compassLocalToWorld(s, fR.lx, fR.ly),
+        };
+      }
+
+      /**
+       * 左腿尖落在 Va、右腿尖落在 Vb（有向边），求铰链、张角、朝向。
+       * @returns {{ cx: number, cy: number, ang: number, spread: number, err: number } | null}
+       */
+      function compassSnapConfigForDirectedEdge(Va, Vb, L) {
+        const dx = Vb.x - Va.x;
+        const dy = Vb.y - Va.y;
+        const d = Math.hypot(dx, dy);
+        if (d < 1e-6) return null;
+        const smin = COMPASS_MIN_SPREAD;
+        const smax = COMPASS_MAX_SPREAD;
+        if (d < 2 * L * Math.sin(smin) - 0.25 || d > 2 * L * Math.sin(smax) + 0.25) {
+          return null;
+        }
+        const spread = Math.asin(Math.min(1, d / (2 * L)));
+        const ux = dx / d;
+        const uy = dy / d;
+        const ang = Math.atan2(uy, ux);
+        const lxL = -Math.sin(spread) * L;
+        const lyL = Math.cos(spread) * L;
+        const lxR = Math.sin(spread) * L;
+        const lyR = Math.cos(spread) * L;
+        const cr = Math.cos(ang);
+        const sr = Math.sin(ang);
+        const wxL = lxL * cr - lyL * sr;
+        const wyL = lxL * sr + lyL * cr;
+        const wxR = lxR * cr - lyR * sr;
+        const wyR = lxR * sr + lyR * cr;
+        const cx = Va.x - wxL;
+        const cy = Va.y - wyL;
+        const err = Math.hypot(cx + wxR - Vb.x, cy + wyR - Vb.y);
+        return { cx, cy, ang, spread, err };
+      }
+
+      function trySnapCompassToNearestTriangleEdge(cmp) {
+        const L = COMPASS_LEG_LEN;
+        const tips = compassTipsWorld(cmp);
+        const tLx = tips.L.x;
+        const tLy = tips.L.y;
+        const tRx = tips.R.x;
+        const tRy = tips.R.y;
+        const margin = COMPASS_LEG_LEN + COMPASS_HINGE_R;
+        const mar = margin * 0.15;
+        let best = null;
+        let bestScore = 1e9;
+
+        for (let i = 0; i < shapes.length; i++) {
+          const tri = shapes[i];
+          if (tri.type !== "triangle") continue;
+          const V = triangleVertsWorld(tri);
+          const edgePairs = [
+            [0, 1],
+            [1, 2],
+            [2, 0],
+          ];
+          for (let e = 0; e < edgePairs.length; e++) {
+            const ia = edgePairs[e][0];
+            const ib = edgePairs[e][1];
+            for (let swap = 0; swap < 2; swap++) {
+              const Va = swap ? V[ib] : V[ia];
+              const Vb = swap ? V[ia] : V[ib];
+              const cfg = compassSnapConfigForDirectedEdge(Va, Vb, L);
+              if (!cfg || cfg.err > 2.5) continue;
+              const dL = distPointSeg(
+                tLx,
+                tLy,
+                Va.x,
+                Va.y,
+                Vb.x,
+                Vb.y
+              );
+              const dR = distPointSeg(
+                tRx,
+                tRy,
+                Va.x,
+                Va.y,
+                Vb.x,
+                Vb.y
+              );
+              if (dL > COMPASS_EDGE_SNAP_TIP || dR > COMPASS_EDGE_SNAP_TIP) {
+                continue;
+              }
+              const dh = Math.hypot(cmp.x - cfg.cx, cmp.y - cfg.cy);
+              if (dh > COMPASS_EDGE_SNAP_HINGE_MAX) continue;
+              const score = dh + 0.35 * (dL + dR);
+              if (score < bestScore) {
+                bestScore = score;
+                best = cfg;
+              }
+            }
+          }
+        }
+        if (best) {
+          cmp.x = Math.max(mar, Math.min(cssW - mar, best.cx));
+          cmp.y = Math.max(mar, Math.min(cssH - mar, best.cy));
+          cmp.angle = best.ang;
+          cmp.spread = best.spread;
+          return true;
+        }
+        return false;
+      }
+
+      function bottomGuideLineY() {
+        return cssH * COMPASS_GUIDE_Y_RATIO;
+      }
+
+      /** 已知左脚尖世界坐标求铰链（与 drawCompass 中腿方向一致） */
+      function compassHingeFromLeftTipWorld(anchorX, gy, ang, sp, L) {
+        const lxL = -Math.sin(sp) * L;
+        const lyL = Math.cos(sp) * L;
+        const cr = Math.cos(ang);
+        const sr = Math.sin(ang);
+        const dlx = lxL * cr - lyL * sr;
+        const dly = lxL * sr + lyL * cr;
+        return { cx: anchorX - dlx, cy: gy - dly };
+      }
+
+      /**
+       * 两脚贴近水平辅助线时：取 ang 为 0 或 π 使两腿尖同高落在 y=gy，并调整铰链 y。
+       * 首次吸附记录左右两 x；之后左脚尖须贴近上一「右脚标记」x，再吸附并只追加新右脚 x。
+       */
+      function trySnapCompassToBottomGuide(cmp) {
+        if (!bottomGuideLineShown) return false;
+        const gy = bottomGuideLineY();
+        const L = COMPASS_LEG_LEN;
+        const tips = compassTipsWorld(cmp);
+        const dY = Math.max(Math.abs(tips.L.y - gy), Math.abs(tips.R.y - gy));
+        if (dY > COMPASS_GUIDE_SNAP_Y) return false;
+
+        const sp = Math.max(
+          COMPASS_MIN_SPREAD,
+          Math.min(COMPASS_MAX_SPREAD, cmp.spread != null ? cmp.spread : 0.38)
+        );
+        let cur = cmp.angle || 0;
+        while (cur > Math.PI) cur -= 2 * Math.PI;
+        while (cur < -Math.PI) cur += 2 * Math.PI;
+        const ang = Math.abs(cur) < Math.abs(cur - Math.PI) ? 0 : Math.PI;
+        const margin = COMPASS_LEG_LEN + COMPASS_HINGE_R;
+        const mar = margin * 0.15;
+
+        if (guideLineMarkXs.length >= 2) {
+          const anchorX = guideLineMarkXs[guideLineMarkXs.length - 1];
+          const dChain = Math.hypot(tips.L.x - anchorX, tips.L.y - gy);
+          if (dChain > COMPASS_GUIDE_CHAIN_HIT) return false;
+          const bak = {
+            x: cmp.x,
+            y: cmp.y,
+            angle: cmp.angle,
+            spread: cmp.spread,
+          };
+          const h = compassHingeFromLeftTipWorld(anchorX, gy, ang, sp, L);
+          const cx = Math.max(mar, Math.min(cssW - mar, h.cx));
+          const cy = Math.max(mar, Math.min(cssH - mar, h.cy));
+          cmp.x = cx;
+          cmp.y = cy;
+          cmp.angle = ang;
+          cmp.spread = sp;
+          const tips2 = compassTipsWorld(cmp);
+          if (
+            Math.abs(tips2.L.x - anchorX) > 6 ||
+            Math.max(Math.abs(tips2.L.y - gy), Math.abs(tips2.R.y - gy)) > 3
+          ) {
+            cmp.x = bak.x;
+            cmp.y = bak.y;
+            cmp.angle = bak.angle;
+            cmp.spread = bak.spread;
+            return false;
+          }
+          guideLineMarkXs.push(tips2.R.x);
+          return true;
+        }
+
+        const cosA = Math.cos(ang);
+        const cy0 = gy - L * Math.cos(sp) * cosA;
+        cmp.x = Math.max(mar, Math.min(cssW - mar, cmp.x));
+        cmp.y = Math.max(mar, Math.min(cssH - mar, cy0));
+        cmp.angle = ang;
+        cmp.spread = sp;
+        const tips2 = compassTipsWorld(cmp);
+        guideLineMarkXs = [tips2.L.x, tips2.R.x];
+        return true;
+      }
+
+      function drawCompass(ctx, s) {
+        const spread = Math.max(
+          COMPASS_MIN_SPREAD,
+          Math.min(COMPASS_MAX_SPREAD, s.spread != null ? s.spread : 0.38)
+        );
+        const ang = s.angle || 0;
+        const L = COMPASS_LEG_LEN;
+        const lx1 = Math.sin(-spread) * L;
+        const ly1 = Math.cos(-spread) * L;
+        const rx1 = Math.sin(spread) * L;
+        const ry1 = Math.cos(spread) * L;
+
+        const uxl = lx1 / L;
+        const uyl = ly1 / L;
+        const pxl = -uyl;
+        const pyl = uxl;
+        const uxr = rx1 / L;
+        const uyr = ry1 / L;
+        const pxr = -uyr;
+        const pyr = uxr;
+
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(ang);
+
+        const tipL = 0.97;
+        const shLx = lx1 * tipL;
+        const shLy = ly1 * tipL + 2;
+        const shRx = rx1 * tipL;
+        const shRy = ry1 * tipL + 2;
+        ctx.strokeStyle = "rgba(0,0,0,0.1)";
+        ctx.lineWidth = 7;
+        ctx.lineCap = "butt";
+        ctx.lineJoin = "miter";
+        ctx.beginPath();
+        ctx.moveTo(0, 2);
+        ctx.lineTo(shLx, shLy);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, 2);
+        ctx.lineTo(shRx, shRy);
+        ctx.stroke();
+
+        const woodEnd = 0.84;
+        const wex = lx1 * woodEnd;
+        const wey = ly1 * woodEnd;
+        ctx.lineWidth = 9;
+        ctx.strokeStyle = "#8b6644";
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(wex, wey);
+        ctx.stroke();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#d4a574";
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(lx1 * 0.82, ly1 * 0.82);
+        ctx.stroke();
+
+        const la = Math.atan2(lx1, ly1);
+        ctx.save();
+        ctx.translate(lx1 * 0.89, ly1 * 0.89);
+        ctx.rotate(la);
+        ctx.fillStyle = "#9a9ea6";
+        ctx.strokeStyle = "#5a5e68";
+        ctx.lineWidth = 1;
+        ctx.fillRect(-4.5, -4, 9, 10);
+        ctx.strokeRect(-4.5, -4, 9, 10);
+        ctx.restore();
+
+        const tWood0 = 0.9;
+        const tWood1 = 0.965;
+        const hw0 = 3.8;
+        const hw1 = 0.85;
+        ctx.fillStyle = "#b88250";
+        ctx.strokeStyle = "#6a4a30";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(lx1 * tWood0 + pxl * hw0, ly1 * tWood0 + pyl * hw0);
+        ctx.lineTo(lx1 * tWood0 - pxl * hw0, ly1 * tWood0 - pyl * hw0);
+        ctx.lineTo(lx1 * tWood1 - pxl * hw1, ly1 * tWood1 - pyl * hw1);
+        ctx.lineTo(lx1 * tWood1 + pxl * hw1, ly1 * tWood1 + pyl * hw1);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "#141418";
+        ctx.beginPath();
+        ctx.moveTo(lx1, ly1);
+        ctx.lineTo(lx1 * tWood1 - pxl * hw1, ly1 * tWood1 - pyl * hw1);
+        ctx.lineTo(lx1 * tWood1 + pxl * hw1, ly1 * tWood1 + pyl * hw1);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#2a2c32";
+        ctx.beginPath();
+        ctx.moveTo(lx1, ly1);
+        ctx.lineTo(lx1 - uxl * 5.5 - pxl * 0.55, ly1 - uyl * 5.5 - pyl * 0.55);
+        ctx.lineTo(lx1 - uxl * 5.5 + pxl * 0.55, ly1 - uyl * 5.5 + pyl * 0.55);
+        ctx.closePath();
+        ctx.fill();
+
+        const steelEnd = 0.88;
+        const sex = rx1 * steelEnd;
+        const sey = ry1 * steelEnd;
+        ctx.lineWidth = 5;
+        ctx.strokeStyle = "#7a8088";
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(sex, sey);
+        ctx.stroke();
+        ctx.strokeStyle = "#d0d6de";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(rx1 * 0.86, ry1 * 0.86);
+        ctx.stroke();
+
+        const tn0 = 0.9;
+        const tn1 = 0.972;
+        const nhw0 = 3.2;
+        const nhw1 = 0.35;
+        ctx.fillStyle = "#6a6e78";
+        ctx.strokeStyle = "#3a3d45";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(rx1 * tn0 + pxr * nhw0, ry1 * tn0 + pyr * nhw0);
+        ctx.lineTo(rx1 * tn0 - pxr * nhw0, ry1 * tn0 - pyr * nhw0);
+        ctx.lineTo(rx1 * tn1 - pxr * nhw1, ry1 * tn1 - pyr * nhw1);
+        ctx.lineTo(rx1 * tn1 + pxr * nhw1, ry1 * tn1 + pyr * nhw1);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#2c2e34";
+        ctx.beginPath();
+        ctx.moveTo(rx1, ry1);
+        ctx.lineTo(rx1 * tn1 - pxr * nhw1, ry1 * tn1 - pyr * nhw1);
+        ctx.lineTo(rx1 * tn1 + pxr * nhw1, ry1 * tn1 + pyr * nhw1);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = "#c8ccd4";
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(rx1 * 0.9 + pxr * 1.1, ry1 * 0.9 + pyr * 1.1);
+        ctx.lineTo(rx1 * tn1 * 0.98 + pxr * 0.25, ry1 * tn1 * 0.98 + pyr * 0.25);
+        ctx.stroke();
+        ctx.fillStyle = "#0e0e12";
+        ctx.beginPath();
+        ctx.moveTo(rx1, ry1);
+        ctx.lineTo(rx1 - uxr * 4.2 - pxr * 0.28, ry1 - uyr * 4.2 - pyr * 0.28);
+        ctx.lineTo(rx1 - uxr * 4.2 + pxr * 0.28, ry1 - uyr * 4.2 + pyr * 0.28);
+        ctx.closePath();
+        ctx.fill();
+
+        const g = ctx.createRadialGradient(-3, -6, 1, 0, -2, COMPASS_HINGE_R);
+        g.addColorStop(0, "#f2e6b8");
+        g.addColorStop(0.45, "#d4b456");
+        g.addColorStop(1, "#7d6220");
+        ctx.beginPath();
+        ctx.arc(0, -2, COMPASS_HINGE_R * 0.52, 0, Math.PI * 2);
+        ctx.fillStyle = g;
+        ctx.fill();
+        ctx.strokeStyle = "#4a3810";
+        ctx.lineWidth = 1.1;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(0, -2, COMPASS_HINGE_R * 0.72, Math.PI * 0.88, Math.PI * 0.12, true);
+        ctx.strokeStyle = "#2a1a06";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(0, -6);
+        ctx.lineTo(0, -COMPASS_HINGE_R * 1.25);
+        ctx.lineWidth = 4.5;
+        ctx.strokeStyle = "#5c4528";
+        ctx.lineCap = "round";
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(0, -COMPASS_HINGE_R * 1.32, 5.5, 0, Math.PI * 2);
+        ctx.fillStyle = "#6a5030";
+        ctx.fill();
+        ctx.strokeStyle = "#3d2810";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      function bboxFor(shape) {
+        if (shape.type === "triangle") {
+          return { w: TRI_LEG_TOP, h: TRI_LEG_LEFT };
+        }
+        if (shape.type === "ruler") {
+          const b = rulerAabb(shape);
+          return { w: b.maxX - b.minX, h: b.maxY - b.minY };
+        }
+        if (shape.type === "redline") {
+          return { w: 0, h: 0 };
+        }
+        return { w: LEAF_W, h: LEAF_H };
+      }
+
+      function hitTest(cssX, cssY) {
+        for (let i = shapes.length - 1; i >= 0; i--) {
+          const s = shapes[i];
+          if (s.type === "redline") {
+            if (
+              s.points &&
+              s.points.length >= 2 &&
+              distPointToPolyline(cssX, cssY, s.points) <= REDLINE_HIT_DIST
+            ) {
+              return s.id;
+            }
+            continue;
+          }
+          if (s.type === "ruler") {
+            if (rulerHit(s, cssX, cssY)) {
+              return s.id;
+            }
+            continue;
+          }
+          if (s.type === "compass") {
+            if (compassHitRegion(s, cssX, cssY)) {
+              return s.id;
+            }
+            continue;
+          }
+          const { w, h } = bboxFor(s);
+          if (
+            cssX >= s.x &&
+            cssY >= s.y &&
+            cssX <= s.x + w &&
+            cssY <= s.y + h
+          ) {
+            const lx = cssX - s.x;
+            const ly = cssY - s.y;
+            sctx.beginPath();
+            if (s.type === "triangle") {
+              trianglePath(sctx, TRI_LEG_TOP, TRI_LEG_LEFT);
+            } else {
+              leafPath(sctx, LEAF_W, LEAF_H);
+            }
+            if (sctx.isPointInPath(lx, ly)) {
+              return s.id;
+            }
+          }
+        }
+        return null;
+      }
+
+      function redraw() {
+        const ctx = canvas.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, cssW, cssH);
+        ctx.strokeStyle = GRID;
+        ctx.lineWidth = 1;
+        const step = 32;
+        for (let x = 0; x <= cssW; x += step) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, cssH);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= cssH; y += step) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(cssW, y);
+          ctx.stroke();
+        }
+
+        if (bottomGuideLineShown) {
+          const gy = bottomGuideLineY();
+          ctx.save();
+          ctx.strokeStyle = "#3d5a8a";
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(10, gy);
+          ctx.lineTo(cssW - 10, gy);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        for (const s of shapes) {
+          ctx.save();
+          if (s.type === "triangle") {
+            ctx.translate(s.x, s.y);
+            drawTriangleStroke(ctx, TRI_LEG_TOP, TRI_LEG_LEFT);
+          } else if (s.type === "leaf") {
+            ctx.translate(s.x, s.y);
+            drawLeafStroke(ctx, LEAF_W, LEAF_H);
+          } else if (s.type === "ruler") {
+            drawRulerStroke(ctx, s);
+          } else if (s.type === "compass") {
+            drawCompass(ctx, s);
+          } else if (s.type === "redline") {
+            drawRedLineShape(ctx, s);
+          }
+          ctx.restore();
+        }
+
+        if (redLineStroke != null && redLineStroke.points.length > 0) {
+          drawRedLineShape(ctx, {
+            id: -1,
+            points: redLineStroke.points,
+          });
+        }
+
+        if (bottomGuideLineShown && guideLineMarkXs.length > 0) {
+          const gy = bottomGuideLineY();
+          ctx.save();
+          ctx.strokeStyle = "#285080";
+          ctx.fillStyle = "#ffffff";
+          ctx.lineWidth = 2.5;
+          for (let mi = 0; mi < guideLineMarkXs.length; mi++) {
+            const x = guideLineMarkXs[mi];
+            ctx.beginPath();
+            ctx.moveTo(x, gy - 11);
+            ctx.lineTo(x, gy + 11);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(x, gy, 4.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        if (anyRulerCloseToBottomGuideLine()) {
+          const gy = bottomGuideLineY();
+          const cx = cssW / 2;
+          ctx.save();
+          ctx.font = "600 16px system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          ctx.strokeStyle = "rgba(255,255,255,0.92)";
+          ctx.fillStyle = "#1a4d72";
+          ctx.lineWidth = 3;
+          ctx.lineJoin = "round";
+          const t12 = "12cm";
+          ctx.strokeText(t12, cx, gy - 6);
+          ctx.fillText(t12, cx, gy - 6);
+          ctx.restore();
+        }
+
+        tryAddRulerTriangleAlignmentHints();
+        prunePersistedEdgeHints();
+        const lengthHints = buildPersistedLengthHintsForDraw();
+        if (lengthHints.length > 0) {
+          drawLengthHints(ctx, lengthHints);
+        }
+        drawTrianglePerimeterFormulas(ctx);
+      }
+
+      function resize() {
+        dpr = window.devicePixelRatio || 1;
+        cssW = wrap.clientWidth;
+        cssH = wrap.clientHeight;
+        canvas.width = Math.max(1, Math.floor(cssW * dpr));
+        canvas.height = Math.max(1, Math.floor(cssH * dpr));
+        canvas.style.width = cssW + "px";
+        canvas.style.height = cssH + "px";
+        redraw();
+      }
+
+      function cssPointFromEvent(e) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+      }
+
+      canvas.addEventListener("dragover", function (e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      });
+
+      canvas.addEventListener("drop", function (e) {
+        e.preventDefault();
+        const type = e.dataTransfer.getData("application/x-shape") || e.dataTransfer.getData("text/plain");
+        if (type !== "triangle" && type !== "leaf") return;
+        const p = cssPointFromEvent(e);
+        const { w, h } =
+          type === "triangle"
+            ? { w: TRI_LEG_TOP, h: TRI_LEG_LEFT }
+            : { w: LEAF_W, h: LEAF_H };
+        let x = p.x - w / 2;
+        let y = p.y - h / 2;
+        x = Math.max(0, Math.min(cssW - w, x));
+        y = Math.max(0, Math.min(cssH - h, y));
+        shapes.push({ id: nextId++, type, x, y });
+        redraw();
+      });
+
+      function setCanvasCursorFromHover(px, py) {
+        lastHoverCss.x = px;
+        lastHoverCss.y = py;
+        if (drawRedLineMode) {
+          canvas.style.cursor = "crosshair";
+          return;
+        }
+        for (let ri = shapes.length - 1; ri >= 0; ri--) {
+          const rs = shapes[ri];
+          if (
+            rs.type === "redline" &&
+            rs.snappedToId != null &&
+            rs.points &&
+            rs.points.length >= 2 &&
+            distPointToPolyline(px, py, rs.points) <= REDLINE_HIT_DIST
+          ) {
+            canvas.style.cursor = "pointer";
+            return;
+          }
+        }
+        if (placeCompassMode) {
+          canvas.style.cursor = "crosshair";
+          return;
+        }
+        for (let i = shapes.length - 1; i >= 0; i--) {
+          const s = shapes[i];
+          if (s.type !== "compass") continue;
+          const r = compassHitRegion(s, px, py);
+          if (r === "L" || r === "R" || r === "body") {
+            canvas.style.cursor = "grab";
+            return;
+          }
+        }
+        canvas.style.cursor = hitTest(px, py) != null ? "grab" : "default";
+      }
+
+      canvas.addEventListener("pointerdown", function (e) {
+        if (e.button !== 0) return;
+        const p = cssPointFromEvent(e);
+        let id = hitTest(p.x, p.y);
+        const paletteCompassEl = document.getElementById("paletteCompass");
+        if (drawRedLineMode && redLineStroke == null && id == null) {
+          redLineStroke = {
+            points: [{ x: p.x, y: p.y }],
+            pointerId: e.pointerId,
+          };
+          canvas.setPointerCapture(e.pointerId);
+          canvas.style.cursor = "crosshair";
+          redraw();
+          return;
+        }
+        if (placeCompassMode) {
+          if (id == null) {
+            shapes.push({
+              id: nextId++,
+              type: "compass",
+              x: p.x,
+              y: p.y,
+              spread: 0.35,
+              angle: 0,
+            });
+            if (!bottomGuideLineShown) {
+              bottomGuideLineShown = true;
+            }
+            placeCompassMode = false;
+            if (paletteCompassEl) {
+              paletteCompassEl.classList.remove("active");
+            }
+            redraw();
+            return;
+          }
+          placeCompassMode = false;
+          if (paletteCompassEl) {
+            paletteCompassEl.classList.remove("active");
+          }
+        }
+        if (id == null) return;
+        const s = shapes.find(function (sh) {
+          return sh.id === id;
+        });
+        if (!s) return;
+        if (s.type === "redline" && s.snappedToId != null) {
+          const tgt = shapes.find(function (sh) {
+            return sh.id === s.snappedToId;
+          });
+          if (tgt) {
+            straightenRedlineBelowShape(s, tgt);
+          } else {
+            delete s.snappedToId;
+          }
+          redraw();
+          return;
+        }
+        if (s.type === "redline") {
+          return;
+        }
+        dragShapeId = id;
+        dragOffsetX = p.x - s.x;
+        dragOffsetY = p.y - s.y;
+        if (s.type === "ruler") {
+          rulerTap = { x0: p.x, y0: p.y, moved: false };
+          compassLegDrag = null;
+          compassTap = null;
+        } else if (s.type === "compass") {
+          rulerTap = null;
+          const leg = compassHitRegion(s, p.x, p.y);
+          compassLegDrag = leg === "L" || leg === "R" ? leg : null;
+          compassTap =
+            compassLegDrag == null
+              ? { x0: p.x, y0: p.y, moved: false }
+              : null;
+        } else {
+          rulerTap = null;
+          compassLegDrag = null;
+          compassTap = null;
+        }
+        canvas.setPointerCapture(e.pointerId);
+        canvas.style.cursor = compassLegDrag != null ? "grabbing" : "grabbing";
+      });
+
+      canvas.addEventListener("pointermove", function (e) {
+        const p = cssPointFromEvent(e);
+        if (
+          redLineStroke != null &&
+          e.pointerId === redLineStroke.pointerId
+        ) {
+          const pts = redLineStroke.points;
+          const last = pts[pts.length - 1];
+          if (Math.hypot(p.x - last.x, p.y - last.y) >= 2) {
+            pts.push({ x: p.x, y: p.y });
+          }
+          redraw();
+          return;
+        }
+        if (dragShapeId != null) {
+          const s = shapes.find(function (sh) {
+            return sh.id === dragShapeId;
+          });
+          if (!s) return;
+          if (
+            s.type === "compass" &&
+            (compassLegDrag === "L" || compassLegDrag === "R")
+          ) {
+            compassUpdateSpreadFromPointer(s, p.x, p.y, compassLegDrag);
+            redraw();
+            return;
+          }
+          if (s.type === "ruler") {
+            if (rulerTap != null) {
+              const dist = Math.hypot(p.x - rulerTap.x0, p.y - rulerTap.y0);
+              if (!rulerTap.moved && dist <= RULER_TAP_DRAG_THRESH) {
+                return;
+              }
+              rulerTap.moved = true;
+            }
+            s.x = p.x - dragOffsetX;
+            s.y = p.y - dragOffsetY;
+            redraw();
+            return;
+          }
+          if (s.type === "compass") {
+            if (compassLegDrag == null && compassTap != null) {
+              const dist = Math.hypot(
+                p.x - compassTap.x0,
+                p.y - compassTap.y0
+              );
+              if (!compassTap.moved && dist <= RULER_TAP_DRAG_THRESH) {
+                return;
+              }
+              compassTap.moved = true;
+            }
+            let nx = p.x - dragOffsetX;
+            let ny = p.y - dragOffsetY;
+            const margin = COMPASS_LEG_LEN + COMPASS_HINGE_R;
+            nx = Math.max(margin * 0.15, Math.min(cssW - margin * 0.15, nx));
+            ny = Math.max(margin * 0.15, Math.min(cssH - margin * 0.15, ny));
+            s.x = nx;
+            s.y = ny;
+            redraw();
+            return;
+          }
+          const { w, h } = bboxFor(s);
+          let nx = p.x - dragOffsetX;
+          let ny = p.y - dragOffsetY;
+          nx = Math.max(0, Math.min(cssW - w, nx));
+          ny = Math.max(0, Math.min(cssH - h, ny));
+          s.x = nx;
+          s.y = ny;
+          redraw();
+          return;
+        }
+        setCanvasCursorFromHover(p.x, p.y);
+      });
+
+      function endDrag(e) {
+        if (dragShapeId == null) return;
+        const sid = dragShapeId;
+        const s = shapes.find(function (sh) {
+          return sh.id === sid;
+        });
+        dragShapeId = null;
+        try {
+          canvas.releasePointerCapture(e.pointerId);
+        } catch (_) {}
+        let needRedraw = false;
+        if (
+          s &&
+          s.type === "ruler" &&
+          rulerTap != null &&
+          !rulerTap.moved
+        ) {
+          cycleRulerAngle(s);
+          needRedraw = true;
+        }
+        if (
+          s &&
+          s.type === "compass" &&
+          compassTap != null &&
+          !compassTap.moved &&
+          compassLegDrag == null
+        ) {
+          cycleCompassAngle(s);
+          needRedraw = true;
+        }
+        rulerTap = null;
+        compassTap = null;
+        compassLegDrag = null;
+        if (
+          s &&
+          s.type === "compass" &&
+          (trySnapCompassToBottomGuide(s) ||
+            trySnapCompassToNearestTriangleEdge(s))
+        ) {
+          needRedraw = true;
+        }
+        if (needRedraw) {
+          redraw();
+        }
+        const p = cssPointFromEvent(e);
+        setCanvasCursorFromHover(p.x, p.y);
+      }
+
+      function finalizeRedLineStroke(e) {
+        if (
+          redLineStroke == null ||
+          e.pointerId !== redLineStroke.pointerId
+        ) {
+          return;
+        }
+        try {
+          canvas.releasePointerCapture(e.pointerId);
+        } catch (_) {}
+        const pts = redLineStroke.points;
+        redLineStroke = null;
+        if (pts.length >= 2) {
+          const rl = { id: nextId++, type: "redline", points: pts.slice() };
+          snapRedlineToNearestShape(rl);
+          shapes.push(rl);
+        }
+        redraw();
+        const p = cssPointFromEvent(e);
+        setCanvasCursorFromHover(p.x, p.y);
+      }
+
+      canvas.addEventListener("pointerup", finalizeRedLineStroke);
+      canvas.addEventListener("pointercancel", finalizeRedLineStroke);
+      canvas.addEventListener("pointerup", endDrag);
+      canvas.addEventListener("pointercancel", endDrag);
+
+      function toggleRulerFromPalette() {
+        let hasRuler = false;
+        for (let i = 0; i < shapes.length; i++) {
+          if (shapes[i].type === "ruler") {
+            hasRuler = true;
+            break;
+          }
+        }
+        if (hasRuler) {
+          for (let i = shapes.length - 1; i >= 0; i--) {
+            if (shapes[i].type !== "ruler") continue;
+            if (dragShapeId === shapes[i].id) {
+              dragShapeId = null;
+            }
+            shapes.splice(i, 1);
+          }
+        } else {
+          const cw = cssW > 0 ? cssW : wrap.clientWidth;
+          const ch = cssH > 0 ? cssH : wrap.clientHeight;
+          const r = {
+            id: nextId++,
+            type: "ruler",
+            x: cw / 2,
+            y: ch / 2,
+            angle: RULER_ANGLE_H,
+          };
+          shapes.push(r);
+        }
+        redraw();
+      }
+
+      document.querySelectorAll(".palette-item[data-shape]").forEach(function (el) {
+        const kind = el.getAttribute("data-shape");
+        if (kind === "ruler") {
+          el.addEventListener("click", function () {
+            toggleRulerFromPalette();
+          });
+          el.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              toggleRulerFromPalette();
+            }
+          });
+          return;
+        }
+        const pc = document.createElement("canvas");
+        pc.width = 72;
+        pc.height = 72;
+        const ctx = pc.getContext("2d");
+        ctx.translate(8, 8);
+        if (kind === "triangle") {
+          drawTriangleStroke(ctx, 48, 36);
+        } else {
+          drawLeafStroke(ctx, 56, 62);
+        }
+        el.appendChild(pc);
+
+        el.addEventListener("dragstart", function (e) {
+          e.dataTransfer.setData("application/x-shape", kind);
+          e.dataTransfer.setData("text/plain", kind);
+          e.dataTransfer.effectAllowed = "copy";
+        });
+      });
+
+      (function initPaletteCompass() {
+        const el = document.getElementById("paletteCompass");
+        if (!el) return;
+        function togglePlaceCompass() {
+          placeCompassMode = !placeCompassMode;
+          if (placeCompassMode) {
+            drawRedLineMode = false;
+            redLineStroke = null;
+            const rle = document.getElementById("paletteRedLine");
+            if (rle) {
+              rle.classList.remove("active");
+            }
+          }
+          el.classList.toggle("active", placeCompassMode);
+          setCanvasCursorFromHover(lastHoverCss.x, lastHoverCss.y);
+        }
+        el.addEventListener("click", function (e) {
+          e.preventDefault();
+          togglePlaceCompass();
+        });
+        el.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            togglePlaceCompass();
+          }
+        });
+      })();
+
+      (function initPaletteRedLine() {
+        const el = document.getElementById("paletteRedLine");
+        if (!el) return;
+        function toggleDrawRedLine() {
+          drawRedLineMode = !drawRedLineMode;
+          if (drawRedLineMode) {
+            placeCompassMode = false;
+            redLineStroke = null;
+            const ce = document.getElementById("paletteCompass");
+            if (ce) {
+              ce.classList.remove("active");
+            }
+          }
+          el.classList.toggle("active", drawRedLineMode);
+          setCanvasCursorFromHover(lastHoverCss.x, lastHoverCss.y);
+        }
+        el.addEventListener("click", function (e) {
+          e.preventDefault();
+          toggleDrawRedLine();
+        });
+        el.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggleDrawRedLine();
+          }
+        });
+      })();
+
+      function clearCanvas() {
+        shapes.length = 0;
+        nextId = 1;
+        persistedEdgeHintKeys.clear();
+        dragShapeId = null;
+        dragOffsetX = 0;
+        dragOffsetY = 0;
+        rulerTap = null;
+        compassTap = null;
+        compassLegDrag = null;
+        placeCompassMode = false;
+        drawRedLineMode = false;
+        redLineStroke = null;
+        bottomGuideLineShown = false;
+        guideLineMarkXs.length = 0;
+        const ce = document.getElementById("paletteCompass");
+        if (ce) ce.classList.remove("active");
+        const rle = document.getElementById("paletteRedLine");
+        if (rle) rle.classList.remove("active");
+        setCanvasCursorFromHover(lastHoverCss.x, lastHoverCss.y);
+        redraw();
+      }
+
+      (function initPaletteClear() {
+        const el = document.getElementById("paletteClear");
+        if (!el) return;
+        el.addEventListener("click", function (e) {
+          e.preventDefault();
+          clearCanvas();
+        });
+        el.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            clearCanvas();
+          }
+        });
+      })();
+
+      window.addEventListener("resize", resize);
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(resize);
+      } else {
+        requestAnimationFrame(resize);
+      }
+    })();
+  </script>
+</body>
+</html>
