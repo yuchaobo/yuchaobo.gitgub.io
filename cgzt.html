@@ -222,9 +222,14 @@
       const COMPASS_GUIDE_SNAP_Y = 30;
       /** 链式吸附：当前左脚尖距「上一右脚标记」的最大距离（像素） */
       const COMPASS_GUIDE_CHAIN_HIT = 44;
+      /** 左脚尖距参考线固定基准点（蓝点）在此距离内时，松手吸附到该点 */
+      const COMPASS_GUIDE_REF_SNAP = 42;
       /** 腿尖到三角形边的距离小于此值且铰链接近解时，松手吸附到该边两端 */
       const COMPASS_EDGE_SNAP_TIP = 34;
       const COMPASS_EDGE_SNAP_HINGE_MAX = 68;
+
+      /** 吸附参考线扫弧动画时长（圆规绕左脚尖转动右脚画弧） */
+      const SWEEP_ANIM_DURATION_MS = 920;
 
       const REDLINE_STROKE_WIDTH = 3;
       const REDLINE_COLOR = "#c62828";
@@ -266,9 +271,31 @@
       /** @type {{ points: { x: number; y: number }[]; pointerId: number } | null} */
       let redLineStroke = null;
       let bottomGuideLineShown = false;
-      /** 吸附到辅助线后各脚位 x（首两次为第一次左右尖，之后每次追加新右脚尖；不移除） */
-      /** @type {number[]} */
-      let guideLineMarkXs = [];
+      /** 吸附到辅助线的标记：x 为脚上一点的参考线 x；pivot 为该次吸附时左脚尖（左腿）世界坐标，作圆弧圆心 */
+      /** @type {{ x: number; pivotX: number; pivotY: number }[]} */
+      let guideLineMarks = [];
+      /** 圆规吸附参考线时：绕左脚枢轴刚体转动（参考姿态 toSt），右脚沿虚线弧；上下半段各半时长 */
+      /** @type {{
+       *   pivotX: number;
+       *   pivotY: number;
+       *   r: number;
+       *   a0: number;
+       *   deltaA: number;
+       *   overlayArcDelta?: number;
+       *   refRightAngle: number;
+       *   t0: number;
+       *   duration: number;
+       *   halfMs: number;
+       *   raf: number;
+       *   compassId?: number;
+       *   fromSt?: { x: number; y: number; angle: number; spread: number };
+       *   toSt?: { x: number; y: number; angle: number; spread: number };
+       * } | null} */
+      let guideSweepAnim = null;
+      /** 圆规标记与左侧固定参考点距离小于此值（px）时用参考点样式 */
+      const GUIDE_REF_MARK_COINCIDE = 9;
+      /** 参考线上「点旁弧」的目标弧长（像素），半径变化时调整圆心角保持弧长相近 */
+      const GUIDE_MARK_ARC_LENGTH_PX = 30;
       /** @type {"L" | "R" | null} */
       let compassLegDrag = null;
       let lastHoverCss = { x: 0, y: 0 };
@@ -642,6 +669,128 @@
           persistedEdgeHintKeys.has(p + "1") &&
           persistedEdgeHintKeys.has(p + "2")
         );
+      }
+
+      /**
+       * 辅助线上至少 4 个标记（三段）时，用箭头连接三角形三边中点与对应线段：
+       * 斜边 → 最左段，顶边 → 中段（内侧弧），左竖边 → 最右段（外侧大包络弧）；两直角边弧线从三角形上方绕过、彼此不交。
+       */
+      function drawCompassGuideMappingArrows(ctx, tri, gy, marks) {
+        if (!marks || marks.length < 4) return;
+        const xs = guideMarksSortedFootXs(marks);
+        const segCx = [
+          (xs[0] + xs[1]) * 0.5,
+          (xs[1] + xs[2]) * 0.5,
+          (xs[2] + xs[3]) * 0.5,
+        ];
+        const tipY = gy - 2;
+        const x0 = tri.x;
+        const y0 = tri.y;
+        /** 顶边中点 ei=0，左竖边中点 ei=1，斜边中点 ei=2 */
+        const midTop = { x: x0 + TRI_LEG_TOP * 0.5, y: y0 };
+        const midLeft = { x: x0, y: y0 + TRI_LEG_LEFT * 0.5 };
+        const midHyp = {
+          x: x0 + TRI_LEG_TOP * 0.5,
+          y: y0 + TRI_LEG_LEFT * 0.5,
+        };
+        const endHyp = { x: segCx[0], y: tipY };
+        const endTop = { x: segCx[1], y: tipY };
+        const endLeft = { x: segCx[2], y: tipY };
+        /** 内弧（顶边）与左竖边外弧分开计算，避免两弧因比例绑定而交叉 */
+        const H_inner = Math.max(78, TRI_LEG_TOP * 0.34, TRI_LEG_LEFT * 0.38);
+        const gapPeak = Math.max(92, TRI_LEG_LEFT * 0.48, TRI_LEG_TOP * 0.22);
+        const H_outer = Math.max(
+          H_inner + gapPeak,
+          TRI_LEG_TOP * 0.56,
+          TRI_LEG_LEFT * 0.64,
+          168
+        );
+        /** 左竖边专用：略抬峰值；控制点用更高 y，且末段再下落 */
+        const H_outerDraw = H_outer + 34;
+        const stroke = "#1a4d72";
+        const lineW = 2.25;
+
+        function drawCubicArrow(sx, sy, c1x, c1y, c2x, c2y, ex, ey) {
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.bezierCurveTo(c1x, c1y, c2x, c2y, ex, ey);
+          ctx.stroke();
+          const tdx = 3 * (ex - c2x);
+          const tdy = 3 * (ey - c2y);
+          const ang = Math.atan2(tdy, tdx);
+          const ah = 9;
+          const aw = 5;
+          ctx.beginPath();
+          ctx.moveTo(ex, ey);
+          ctx.lineTo(
+            ex - ah * Math.cos(ang) + aw * Math.sin(ang),
+            ey - ah * Math.sin(ang) - aw * Math.cos(ang)
+          );
+          ctx.lineTo(
+            ex - ah * Math.cos(ang) - aw * Math.sin(ang),
+            ey - ah * Math.sin(ang) + aw * Math.cos(ang)
+          );
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        function drawLineArrow(sx, sy, ex, ey) {
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(ex, ey);
+          ctx.stroke();
+          const ang = Math.atan2(ey - sy, ex - sx);
+          const ah = 8;
+          const aw = 4.5;
+          ctx.beginPath();
+          ctx.moveTo(ex, ey);
+          ctx.lineTo(
+            ex - ah * Math.cos(ang) + aw * Math.sin(ang),
+            ey - ah * Math.sin(ang) - aw * Math.cos(ang)
+          );
+          ctx.lineTo(
+            ex - ah * Math.cos(ang) - aw * Math.sin(ang),
+            ey - ah * Math.sin(ang) + aw * Math.cos(ang)
+          );
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        ctx.save();
+        ctx.strokeStyle = stroke;
+        ctx.fillStyle = stroke;
+        ctx.lineWidth = lineW;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        /** 内侧弧（顶边 → 中段）：比外侧略低，仍从三角形上方明显抬高 */
+        drawCubicArrow(
+          midTop.x,
+          midTop.y,
+          midTop.x,
+          y0 - H_inner,
+          endTop.x,
+          y0 - H_inner * 0.96,
+          endTop.x,
+          endTop.y
+        );
+
+        /** 外侧弧：整体更高；P1 快速抬高；P2 靠近终点且保持高位，弧线“顶”久一点再落向标注 */
+        drawCubicArrow(
+          midLeft.x,
+          midLeft.y,
+          x0 - Math.max(112, TRI_LEG_LEFT * 0.58),
+          y0 - H_outerDraw * 0.68,
+          endLeft.x * 0.87 + midLeft.x * 0.13 - 22,
+          y0 - H_outerDraw * 0.97,
+          endLeft.x,
+          endLeft.y
+        );
+
+        /** 斜边 → 最左段：近似指向对应线段的短箭头 */
+        drawLineArrow(midHyp.x, midHyp.y, endHyp.x, endHyp.y);
+
+        ctx.restore();
       }
 
       function drawTrianglePerimeterFormulas(ctx) {
@@ -1277,6 +1426,371 @@
         return cssH * COMPASS_GUIDE_Y_RATIO;
       }
 
+      /** 底部参考线左侧固定基准点的 x（与绘制一致：约在辅助线段长的 1/4 处） */
+      function guideLineRefPointX() {
+        return Math.max(
+          48,
+          Math.min(10 + (cssW - 20) * 0.25, cssW - 48)
+        );
+      }
+
+      /**
+       * 扫弧进度缓动：前半加速、后半减速，中段变化快，视觉上「甩弧」幅度更大。
+       */
+      function easeSweepAnim(tRaw) {
+        const t = Math.max(0, Math.min(1, tRaw));
+        return t < 0.5
+          ? 16 * t * t * t * t * t
+          : 1 - Math.pow(-2 * t + 2, 5) / 2;
+      }
+
+      function angleLerpRad(a, b, t) {
+        let d = b - a;
+        while (d > Math.PI) {
+          d -= 2 * Math.PI;
+        }
+        while (d < -Math.PI) {
+          d += 2 * Math.PI;
+        }
+        return a + d * t;
+      }
+
+      /**
+       * 扫弧动画在时刻 timeMs 的右脚极角、canvas arc 方向及已过时间（与虚线弧、圆规姿态共用）。
+       */
+      function guideSweepAnimSample(g, timeMs) {
+        const elapsed = timeMs - g.t0;
+        const half = g.halfMs != null ? g.halfMs : g.duration * 0.5;
+        const sweep =
+          g.overlayArcDelta != null ? g.overlayArcDelta : g.deltaA;
+        const upSweep = -sweep;
+        let endA;
+        let anticlockwise;
+        if (elapsed < half) {
+          const tp = Math.min(1, elapsed / half);
+          const ease = easeSweepAnim(tp);
+          endA = g.a0 + upSweep * ease;
+          anticlockwise = upSweep < 0;
+        } else {
+          const tp = Math.min(1, (elapsed - half) / half);
+          const ease = easeSweepAnim(tp);
+          endA = g.a0 + sweep * ease;
+          anticlockwise = sweep < 0;
+        }
+        return {
+          endA: endA,
+          anticlockwise: anticlockwise,
+          elapsed: elapsed,
+        };
+      }
+
+      /**
+       * 左脚尖、右脚尖世界坐标固定时求铰链与 angle/spread（两腿长均为 legLen）。
+       * 左脚固定、右脚沿弧扫时用此式反求圆规姿态。
+       */
+      function compassPoseFromFixedTips(FLx, FLy, FRx, FRy, legLen) {
+        const dx = FRx - FLx;
+        const dy = FRy - FLy;
+        const d = Math.hypot(dx, dy);
+        if (d < 1e-4 || d > 2 * legLen - 0.5) {
+          return null;
+        }
+        const mx = (FLx + FRx) * 0.5;
+        const my = (FLy + FRy) * 0.5;
+        const hh = legLen * legLen - (d * 0.5) * (d * 0.5);
+        if (hh < 0) {
+          return null;
+        }
+        const h = Math.sqrt(hh);
+        const nx = -dy / d;
+        const ny = dx / d;
+        const c1x = mx + nx * h;
+        const c1y = my + ny * h;
+        const c2x = mx - nx * h;
+        const c2y = my - ny * h;
+        const hinge =
+          c1y < c2y ? { x: c1x, y: c1y } : { x: c2x, y: c2y };
+        const vLx = FLx - hinge.x;
+        const vLy = FLy - hinge.y;
+        const vRx = FRx - hinge.x;
+        const vRy = FRy - hinge.y;
+        const c =
+          (vLx * vRx + vLy * vRy) /
+          (legLen * legLen);
+        let spread =
+          0.5 *
+          Math.acos(Math.min(1, Math.max(-1, c)));
+        spread = Math.max(
+          COMPASS_MIN_SPREAD,
+          Math.min(COMPASS_MAX_SPREAD, spread)
+        );
+        const refLx = Math.sin(-spread) * legLen;
+        const refLy = Math.cos(-spread) * legLen;
+        const angle = Math.atan2(
+          vLx * refLy - vLy * refLx,
+          vLx * refLx + vLy * refLy
+        );
+        return {
+          x: hinge.x,
+          y: hinge.y,
+          angle: angle,
+          spread: spread,
+        };
+      }
+
+      /**
+       * 绕左脚枢轴 pivot 刚体转动：以吸附后的参考姿态 refSt 为 0°，转角 dRot（弧度）后铰链与 angle 同步旋转，
+       * 左脚尖恒在 pivot（与真圆规扎针画弧一致）。
+       */
+      function applyCompassRigidRotateAboutPivot(
+        cmp,
+        pivotX,
+        pivotY,
+        refSt,
+        dRot
+      ) {
+        const c = Math.cos(dRot);
+        const s = Math.sin(dRot);
+        const hx0 = refSt.x - pivotX;
+        const hy0 = refSt.y - pivotY;
+        cmp.x = pivotX + hx0 * c - hy0 * s;
+        cmp.y = pivotY + hx0 * s + hy0 * c;
+        cmp.angle = refSt.angle + dRot;
+        cmp.spread = refSt.spread;
+      }
+
+      /**
+       * 吸附扫弧动画：像扎针画圆一样，以吸附后姿态 toSt 为基准绕左脚尖 pivot 刚体旋转，
+       * 使右脚尖极角等于虚线弧上的 endA（与橙点一致）；结束时写回 toSt。
+       */
+      function applyCompassPoseFromSweepAnim() {
+        const g = guideSweepAnim;
+        if (g == null || g.compassId == null) {
+          return;
+        }
+        const cmp = shapes.find(function (sh) {
+          return sh.id === g.compassId && sh.type === "compass";
+        });
+        if (!cmp) {
+          return;
+        }
+        const now = performance.now();
+        if (now - g.t0 >= g.duration - 1e-6) {
+          if (g.toSt != null) {
+            cmp.x = g.toSt.x;
+            cmp.y = g.toSt.y;
+            cmp.angle = g.toSt.angle;
+            cmp.spread = g.toSt.spread;
+          }
+          return;
+        }
+        const sample = guideSweepAnimSample(g, now);
+        const ts = g.toSt;
+        if (ts != null && g.refRightAngle != null) {
+          const dRot = sample.endA - g.refRightAngle;
+          applyCompassRigidRotateAboutPivot(
+            cmp,
+            g.pivotX,
+            g.pivotY,
+            ts,
+            dRot
+          );
+          return;
+        }
+        const Rx = g.pivotX + g.r * Math.cos(sample.endA);
+        const Ry = g.pivotY + g.r * Math.sin(sample.endA);
+        const pose = compassPoseFromFixedTips(
+          g.pivotX,
+          g.pivotY,
+          Rx,
+          Ry,
+          COMPASS_LEG_LEN
+        );
+        if (pose != null) {
+          cmp.x = pose.x;
+          cmp.y = pose.y;
+          cmp.angle = pose.angle;
+          cmp.spread = pose.spread;
+          return;
+        }
+        if (g.fromSt != null && g.toSt != null) {
+          const half = g.halfMs != null ? g.halfMs : g.duration * 0.5;
+          const a = g.fromSt;
+          const b = g.toSt;
+          if (sample.elapsed < half) {
+            cmp.x = a.x;
+            cmp.y = a.y;
+            cmp.angle = a.angle;
+            cmp.spread = a.spread;
+          } else {
+            const t = Math.min(1, (sample.elapsed - half) / half);
+            const ease = easeSweepAnim(t);
+            cmp.x = a.x + (b.x - a.x) * ease;
+            cmp.y = a.y + (b.y - a.y) * ease;
+            cmp.spread = Math.max(
+              COMPASS_MIN_SPREAD,
+              Math.min(
+                COMPASS_MAX_SPREAD,
+                a.spread + (b.spread - a.spread) * ease
+              )
+            );
+            cmp.angle = angleLerpRad(a.angle, b.angle, ease);
+          }
+        }
+      }
+
+      /**
+       * 吸附成功后：左脚尖扎在吸附点不动，整支圆规绕该点刚体转动（与画圆一致），右脚尖沿虚线弧运动；
+       * 半径为吸附后两脚距 r，总时长 SWEEP_ANIM_DURATION_MS。
+       */
+      function beginGuideSweepAnimation(
+        tipsBefore,
+        tipsAfter,
+        compassId,
+        fromSt,
+        toSt
+      ) {
+        const hasCompassPose =
+          compassId != null &&
+          fromSt != null &&
+          toSt != null;
+        if (guideSweepAnim != null && guideSweepAnim.raf) {
+          cancelAnimationFrame(guideSweepAnim.raf);
+          guideSweepAnim = null;
+        }
+        const px = tipsAfter.L.x;
+        const py = tipsAfter.L.y;
+        const r = Math.hypot(tipsAfter.R.x - px, tipsAfter.R.y - py);
+        if (r < 8) {
+          if (hasCompassPose) {
+            const cmp = shapes.find(function (sh) {
+              return sh.id === compassId && sh.type === "compass";
+            });
+            if (cmp) {
+              cmp.x = toSt.x;
+              cmp.y = toSt.y;
+              cmp.angle = toSt.angle;
+              cmp.spread = toSt.spread;
+            }
+          }
+          return;
+        }
+        const a0 = Math.atan2(tipsBefore.R.y - py, tipsBefore.R.x - px);
+        const a1 = Math.atan2(tipsAfter.R.y - py, tipsAfter.R.x - px);
+        let deltaA = a1 - a0;
+        while (deltaA > Math.PI) {
+          deltaA -= 2 * Math.PI;
+        }
+        while (deltaA < -Math.PI) {
+          deltaA += 2 * Math.PI;
+        }
+        if (Math.abs(deltaA) < 0.035 && !hasCompassPose) {
+          return;
+        }
+        let overlayArcDelta = deltaA;
+        if (Math.abs(overlayArcDelta) < 0.28) {
+          const sx = tipsAfter.R.x - tipsBefore.R.x;
+          const sy = tipsAfter.R.y - tipsBefore.R.y;
+          const dir =
+            Math.abs(sx) + Math.abs(sy) < 2
+              ? 1
+              : Math.abs(sx) >= Math.abs(sy)
+                ? sx >= 0
+                  ? 1
+                  : -1
+                : sy >= 0
+                  ? 1
+                  : -1;
+          overlayArcDelta = dir * 0.42;
+        }
+        const halfMs = SWEEP_ANIM_DURATION_MS * 0.5;
+        guideSweepAnim = {
+          pivotX: px,
+          pivotY: py,
+          r: r,
+          a0: a0,
+          deltaA: deltaA,
+          overlayArcDelta: overlayArcDelta,
+          refRightAngle: a1,
+          t0: performance.now(),
+          duration: SWEEP_ANIM_DURATION_MS,
+          halfMs: halfMs,
+          raf: 0,
+          compassId: compassId,
+          fromSt: fromSt,
+          toSt: toSt,
+        };
+        function tickGuideSweepAnim() {
+          if (guideSweepAnim == null) {
+            return;
+          }
+          redraw();
+          const elapsed = performance.now() - guideSweepAnim.t0;
+          if (elapsed >= guideSweepAnim.duration) {
+            cancelAnimationFrame(guideSweepAnim.raf);
+            const fin = guideSweepAnim.toSt;
+            const cid = guideSweepAnim.compassId;
+            guideSweepAnim = null;
+            if (fin != null && cid != null) {
+              const cmp = shapes.find(function (sh) {
+                return sh.id === cid && sh.type === "compass";
+              });
+              if (cmp) {
+                cmp.x = fin.x;
+                cmp.y = fin.y;
+                cmp.angle = fin.angle;
+                cmp.spread = fin.spread;
+              }
+            }
+            redraw();
+            return;
+          }
+          guideSweepAnim.raf = requestAnimationFrame(tickGuideSweepAnim);
+        }
+        tickGuideSweepAnim();
+      }
+
+      function drawGuideSweepAnimOverlay(ctx) {
+        if (guideSweepAnim == null) {
+          return;
+        }
+        const g = guideSweepAnim;
+        const { endA, anticlockwise } = guideSweepAnimSample(
+          g,
+          performance.now()
+        );
+        ctx.save();
+        ctx.strokeStyle = "rgba(25, 85, 165, 0.92)";
+        ctx.lineWidth = 4.5;
+        ctx.lineCap = "round";
+        ctx.setLineDash([10, 7]);
+        ctx.beginPath();
+        ctx.arc(g.pivotX, g.pivotY, g.r, g.a0, endA, anticlockwise);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        const hx = g.pivotX + g.r * Math.cos(endA);
+        const hy = g.pivotY + g.r * Math.sin(endA);
+        ctx.fillStyle = "rgba(230, 105, 35, 0.95)";
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(hx, hy, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function guideMarkFootX(m) {
+        return typeof m === "number" ? m : m.x;
+      }
+
+      function guideMarksSortedFootXs(marks) {
+        const xs = marks.map(guideMarkFootX);
+        return xs.slice().sort(function (a, b) {
+          return a - b;
+        });
+      }
+
       /** 已知左脚尖世界坐标求铰链（与 drawCompass 中腿方向一致） */
       function compassHingeFromLeftTipWorld(anchorX, gy, ang, sp, L) {
         const lxL = -Math.sin(sp) * L;
@@ -1291,6 +1805,7 @@
       /**
        * 两脚贴近水平辅助线时：取 ang 为 0 或 π 使两腿尖同高落在 y=gy，并调整铰链 y。
        * 首次吸附记录左右两 x；之后左脚尖须贴近上一「右脚标记」x，再吸附并只追加新右脚 x。
+       * 若左脚尖靠近参考线左侧固定蓝点，则优先吸附到该点。
        */
       function trySnapCompassToBottomGuide(cmp) {
         if (!bottomGuideLineShown) return false;
@@ -1310,11 +1825,15 @@
         const ang = Math.abs(cur) < Math.abs(cur - Math.PI) ? 0 : Math.PI;
         const margin = COMPASS_LEG_LEN + COMPASS_HINGE_R;
         const mar = margin * 0.15;
+        const refX = guideLineRefPointX();
+        const distToRef = Math.hypot(tips.L.x - refX, tips.L.y - gy);
+        const nearRef = distToRef <= COMPASS_GUIDE_REF_SNAP;
 
-        if (guideLineMarkXs.length >= 2) {
-          const anchorX = guideLineMarkXs[guideLineMarkXs.length - 1];
-          const dChain = Math.hypot(tips.L.x - anchorX, tips.L.y - gy);
-          if (dChain > COMPASS_GUIDE_CHAIN_HIT) return false;
+        /**
+         * 将左脚尖落在 (anchorX, gy)，与链式吸附同验算。
+         * @returns {ReturnType<typeof compassTipsWorld> | null}
+         */
+        function trySnapCompassAtAnchor(anchorX) {
           const bak = {
             x: cmp.x,
             y: cmp.y,
@@ -1337,9 +1856,51 @@
             cmp.y = bak.y;
             cmp.angle = bak.angle;
             cmp.spread = bak.spread;
-            return false;
+            return null;
           }
-          guideLineMarkXs.push(tips2.R.x);
+          return tips2;
+        }
+
+        if (nearRef) {
+          const tips2 = trySnapCompassAtAnchor(refX);
+          if (tips2) {
+            if (guideLineMarks.length >= 2) {
+              guideLineMarks.push({
+                x: tips2.R.x,
+                pivotX: tips2.L.x,
+                pivotY: tips2.L.y,
+              });
+            } else {
+              guideLineMarks = [
+                {
+                  x: tips2.L.x,
+                  pivotX: tips2.L.x,
+                  pivotY: tips2.L.y,
+                },
+                {
+                  x: tips2.R.x,
+                  pivotX: tips2.L.x,
+                  pivotY: tips2.L.y,
+                },
+              ];
+            }
+            return true;
+          }
+        }
+
+        if (guideLineMarks.length >= 2) {
+          const anchorX = guideMarkFootX(
+            guideLineMarks[guideLineMarks.length - 1]
+          );
+          const dChain = Math.hypot(tips.L.x - anchorX, tips.L.y - gy);
+          if (dChain > COMPASS_GUIDE_CHAIN_HIT) return false;
+          const tips2 = trySnapCompassAtAnchor(anchorX);
+          if (!tips2) return false;
+          guideLineMarks.push({
+            x: tips2.R.x,
+            pivotX: tips2.L.x,
+            pivotY: tips2.L.y,
+          });
           return true;
         }
 
@@ -1350,7 +1911,18 @@
         cmp.angle = ang;
         cmp.spread = sp;
         const tips2 = compassTipsWorld(cmp);
-        guideLineMarkXs = [tips2.L.x, tips2.R.x];
+        guideLineMarks = [
+          {
+            x: tips2.L.x,
+            pivotX: tips2.L.x,
+            pivotY: tips2.L.y,
+          },
+          {
+            x: tips2.R.x,
+            pivotX: tips2.L.x,
+            pivotY: tips2.L.y,
+          },
+        ];
         return true;
       }
 
@@ -1374,32 +1946,41 @@
         const uyr = ry1 / L;
         const pxr = -uyr;
         const pyr = uxr;
+        /** 左侧金属腿用 lx 方向量；右侧木质腿用 rx 方向量 */
+        const umx = uxl;
+        const umy = uyl;
+        const pmx = pxl;
+        const pmy = pyl;
+        const uwx = uxr;
+        const uwy = uyr;
+        const pwx = pxr;
+        const pwy = pyr;
 
         ctx.save();
         ctx.translate(s.x, s.y);
         ctx.rotate(ang);
 
         const tipL = 0.97;
-        const shLx = lx1 * tipL;
-        const shLy = ly1 * tipL + 2;
-        const shRx = rx1 * tipL;
-        const shRy = ry1 * tipL + 2;
+        const shMx = lx1 * tipL;
+        const shMy = ly1 * tipL + 2;
+        const shWx = rx1 * tipL;
+        const shWy = ry1 * tipL + 2;
         ctx.strokeStyle = "rgba(0,0,0,0.1)";
         ctx.lineWidth = 7;
         ctx.lineCap = "butt";
         ctx.lineJoin = "miter";
         ctx.beginPath();
         ctx.moveTo(0, 2);
-        ctx.lineTo(shLx, shLy);
+        ctx.lineTo(shMx, shMy);
         ctx.stroke();
         ctx.beginPath();
         ctx.moveTo(0, 2);
-        ctx.lineTo(shRx, shRy);
+        ctx.lineTo(shWx, shWy);
         ctx.stroke();
 
         const woodEnd = 0.84;
-        const wex = lx1 * woodEnd;
-        const wey = ly1 * woodEnd;
+        const wex = rx1 * woodEnd;
+        const wey = ry1 * woodEnd;
         ctx.lineWidth = 9;
         ctx.strokeStyle = "#8b6644";
         ctx.beginPath();
@@ -1410,12 +1991,12 @@
         ctx.strokeStyle = "#d4a574";
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.lineTo(lx1 * 0.82, ly1 * 0.82);
+        ctx.lineTo(rx1 * 0.82, ry1 * 0.82);
         ctx.stroke();
 
-        const la = Math.atan2(lx1, ly1);
+        const la = Math.atan2(rx1, ry1);
         ctx.save();
-        ctx.translate(lx1 * 0.89, ly1 * 0.89);
+        ctx.translate(rx1 * 0.89, ry1 * 0.89);
         ctx.rotate(la);
         ctx.fillStyle = "#9a9ea6";
         ctx.strokeStyle = "#5a5e68";
@@ -1432,32 +2013,32 @@
         ctx.strokeStyle = "#6a4a30";
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(lx1 * tWood0 + pxl * hw0, ly1 * tWood0 + pyl * hw0);
-        ctx.lineTo(lx1 * tWood0 - pxl * hw0, ly1 * tWood0 - pyl * hw0);
-        ctx.lineTo(lx1 * tWood1 - pxl * hw1, ly1 * tWood1 - pyl * hw1);
-        ctx.lineTo(lx1 * tWood1 + pxl * hw1, ly1 * tWood1 + pyl * hw1);
+        ctx.moveTo(rx1 * tWood0 + pwx * hw0, ry1 * tWood0 + pwy * hw0);
+        ctx.lineTo(rx1 * tWood0 - pwx * hw0, ry1 * tWood0 - pwy * hw0);
+        ctx.lineTo(rx1 * tWood1 - pwx * hw1, ry1 * tWood1 - pwy * hw1);
+        ctx.lineTo(rx1 * tWood1 + pwx * hw1, ry1 * tWood1 + pwy * hw1);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
 
         ctx.fillStyle = "#141418";
         ctx.beginPath();
-        ctx.moveTo(lx1, ly1);
-        ctx.lineTo(lx1 * tWood1 - pxl * hw1, ly1 * tWood1 - pyl * hw1);
-        ctx.lineTo(lx1 * tWood1 + pxl * hw1, ly1 * tWood1 + pyl * hw1);
+        ctx.moveTo(rx1, ry1);
+        ctx.lineTo(rx1 * tWood1 - pwx * hw1, ry1 * tWood1 - pwy * hw1);
+        ctx.lineTo(rx1 * tWood1 + pwx * hw1, ry1 * tWood1 + pwy * hw1);
         ctx.closePath();
         ctx.fill();
         ctx.fillStyle = "#2a2c32";
         ctx.beginPath();
-        ctx.moveTo(lx1, ly1);
-        ctx.lineTo(lx1 - uxl * 5.5 - pxl * 0.55, ly1 - uyl * 5.5 - pyl * 0.55);
-        ctx.lineTo(lx1 - uxl * 5.5 + pxl * 0.55, ly1 - uyl * 5.5 + pyl * 0.55);
+        ctx.moveTo(rx1, ry1);
+        ctx.lineTo(rx1 - uwx * 5.5 - pwx * 0.55, ry1 - uwy * 5.5 - pwy * 0.55);
+        ctx.lineTo(rx1 - uwx * 5.5 + pwx * 0.55, ry1 - uwy * 5.5 + pwy * 0.55);
         ctx.closePath();
         ctx.fill();
 
         const steelEnd = 0.88;
-        const sex = rx1 * steelEnd;
-        const sey = ry1 * steelEnd;
+        const sex = lx1 * steelEnd;
+        const sey = ly1 * steelEnd;
         ctx.lineWidth = 5;
         ctx.strokeStyle = "#7a8088";
         ctx.beginPath();
@@ -1468,7 +2049,7 @@
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.lineTo(rx1 * 0.86, ry1 * 0.86);
+        ctx.lineTo(lx1 * 0.86, ly1 * 0.86);
         ctx.stroke();
 
         const tn0 = 0.9;
@@ -1479,31 +2060,31 @@
         ctx.strokeStyle = "#3a3d45";
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(rx1 * tn0 + pxr * nhw0, ry1 * tn0 + pyr * nhw0);
-        ctx.lineTo(rx1 * tn0 - pxr * nhw0, ry1 * tn0 - pyr * nhw0);
-        ctx.lineTo(rx1 * tn1 - pxr * nhw1, ry1 * tn1 - pyr * nhw1);
-        ctx.lineTo(rx1 * tn1 + pxr * nhw1, ry1 * tn1 + pyr * nhw1);
+        ctx.moveTo(lx1 * tn0 + pmx * nhw0, ly1 * tn0 + pmy * nhw0);
+        ctx.lineTo(lx1 * tn0 - pmx * nhw0, ly1 * tn0 - pmy * nhw0);
+        ctx.lineTo(lx1 * tn1 - pmx * nhw1, ly1 * tn1 - pmy * nhw1);
+        ctx.lineTo(lx1 * tn1 + pmx * nhw1, ly1 * tn1 + pmy * nhw1);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
         ctx.fillStyle = "#2c2e34";
         ctx.beginPath();
-        ctx.moveTo(rx1, ry1);
-        ctx.lineTo(rx1 * tn1 - pxr * nhw1, ry1 * tn1 - pyr * nhw1);
-        ctx.lineTo(rx1 * tn1 + pxr * nhw1, ry1 * tn1 + pyr * nhw1);
+        ctx.moveTo(lx1, ly1);
+        ctx.lineTo(lx1 * tn1 - pmx * nhw1, ly1 * tn1 - pmy * nhw1);
+        ctx.lineTo(lx1 * tn1 + pmx * nhw1, ly1 * tn1 + pmy * nhw1);
         ctx.closePath();
         ctx.fill();
         ctx.strokeStyle = "#c8ccd4";
         ctx.lineWidth = 0.9;
         ctx.beginPath();
-        ctx.moveTo(rx1 * 0.9 + pxr * 1.1, ry1 * 0.9 + pyr * 1.1);
-        ctx.lineTo(rx1 * tn1 * 0.98 + pxr * 0.25, ry1 * tn1 * 0.98 + pyr * 0.25);
+        ctx.moveTo(lx1 * 0.9 + pmx * 1.1, ly1 * 0.9 + pmy * 1.1);
+        ctx.lineTo(lx1 * tn1 * 0.98 + pmx * 0.25, ly1 * tn1 * 0.98 + pmy * 0.25);
         ctx.stroke();
         ctx.fillStyle = "#0e0e12";
         ctx.beginPath();
-        ctx.moveTo(rx1, ry1);
-        ctx.lineTo(rx1 - uxr * 4.2 - pxr * 0.28, ry1 - uyr * 4.2 - pyr * 0.28);
-        ctx.lineTo(rx1 - uxr * 4.2 + pxr * 0.28, ry1 - uyr * 4.2 + pyr * 0.28);
+        ctx.moveTo(lx1, ly1);
+        ctx.lineTo(lx1 - umx * 4.2 - pmx * 0.28, ly1 - umy * 4.2 - pmy * 0.28);
+        ctx.lineTo(lx1 - umx * 4.2 + pmx * 0.28, ly1 - umy * 4.2 + pmy * 0.28);
         ctx.closePath();
         ctx.fill();
 
@@ -1613,6 +2194,7 @@
       }
 
       function redraw() {
+        applyCompassPoseFromSweepAnim();
         const ctx = canvas.getContext("2d");
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.fillStyle = "#ffffff";
@@ -1635,12 +2217,20 @@
 
         if (bottomGuideLineShown) {
           const gy = bottomGuideLineY();
+          const refLeftX = guideLineRefPointX();
           ctx.save();
           ctx.strokeStyle = "#3d5a8a";
           ctx.lineWidth = 2.5;
           ctx.beginPath();
           ctx.moveTo(10, gy);
           ctx.lineTo(cssW - 10, gy);
+          ctx.stroke();
+          ctx.fillStyle = "#285080";
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(refLeftX, gy, 5, 0, Math.PI * 2);
+          ctx.fill();
           ctx.stroke();
           ctx.restore();
         }
@@ -1672,24 +2262,65 @@
           });
         }
 
-        if (bottomGuideLineShown && guideLineMarkXs.length > 0) {
+        if (bottomGuideLineShown && guideLineMarks.length > 0) {
           const gy = bottomGuideLineY();
+          const refX = guideLineRefPointX();
           ctx.save();
-          ctx.strokeStyle = "#285080";
-          ctx.fillStyle = "#ffffff";
-          ctx.lineWidth = 2.5;
-          for (let mi = 0; mi < guideLineMarkXs.length; mi++) {
-            const x = guideLineMarkXs[mi];
-            ctx.beginPath();
-            ctx.moveTo(x, gy - 11);
-            ctx.lineTo(x, gy + 11);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.arc(x, gy, 4.5, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
+          for (let mi = 0; mi < guideLineMarks.length; mi++) {
+            const m = guideLineMarks[mi];
+            const x = guideMarkFootX(m);
+            const onRef = Math.abs(x - refX) <= GUIDE_REF_MARK_COINCIDE;
+            if (onRef) {
+              ctx.fillStyle = "#285080";
+              ctx.strokeStyle = "#ffffff";
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.arc(x, gy, 5, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.stroke();
+            } else {
+              const px = m.pivotX;
+              const py = m.pivotY;
+              const R = Math.hypot(x - px, gy - py);
+              ctx.fillStyle = "#285080";
+              ctx.strokeStyle = "#285080";
+              ctx.lineWidth = 2;
+              if (R >= 5) {
+                const baseAng = Math.atan2(gy - py, x - px);
+                let span = GUIDE_MARK_ARC_LENGTH_PX / (2 * R);
+                const spanMax = Math.PI * 0.42;
+                if (span > spanMax) {
+                  span = spanMax;
+                }
+                ctx.beginPath();
+                ctx.arc(px, py, R, baseAng - span, baseAng + span, false);
+                ctx.stroke();
+              }
+              ctx.beginPath();
+              ctx.arc(x, gy, 3.8, 0, Math.PI * 2);
+              ctx.fill();
+            }
           }
           ctx.restore();
+        }
+
+        drawGuideSweepAnimOverlay(ctx);
+
+        if (
+          bottomGuideLineShown &&
+          guideLineMarks.length >= 4
+        ) {
+          const gyMap = bottomGuideLineY();
+          for (let ti = 0; ti < shapes.length; ti++) {
+            if (shapes[ti].type !== "triangle") continue;
+            drawCompassGuideMappingArrows(
+              ctx,
+              shapes[ti],
+              gyMap,
+              guideLineMarks
+            );
+            break;
+          }
         }
 
         if (anyRulerCloseToBottomGuideLine()) {
@@ -2022,13 +2653,37 @@
         rulerTap = null;
         compassTap = null;
         compassLegDrag = null;
-        if (
-          s &&
-          s.type === "compass" &&
-          (trySnapCompassToBottomGuide(s) ||
-            trySnapCompassToNearestTriangleEdge(s))
-        ) {
-          needRedraw = true;
+        if (s && s.type === "compass") {
+          const fromState = {
+            x: s.x,
+            y: s.y,
+            angle: s.angle,
+            spread: s.spread,
+          };
+          const tipsBeforeSnap = compassTipsWorld(s);
+          if (trySnapCompassToBottomGuide(s)) {
+            const toState = {
+              x: s.x,
+              y: s.y,
+              angle: s.angle,
+              spread: s.spread,
+            };
+            const tipsAfterSnap = compassTipsWorld(s);
+            s.x = fromState.x;
+            s.y = fromState.y;
+            s.angle = fromState.angle;
+            s.spread = fromState.spread;
+            beginGuideSweepAnimation(
+              tipsBeforeSnap,
+              tipsAfterSnap,
+              s.id,
+              fromState,
+              toState
+            );
+            needRedraw = true;
+          } else if (trySnapCompassToNearestTriangleEdge(s)) {
+            needRedraw = true;
+          }
         }
         if (needRedraw) {
           redraw();
@@ -2213,7 +2868,11 @@
         drawRedLineMode = false;
         redLineStroke = null;
         bottomGuideLineShown = false;
-        guideLineMarkXs.length = 0;
+        guideLineMarks.length = 0;
+        if (guideSweepAnim != null && guideSweepAnim.raf) {
+          cancelAnimationFrame(guideSweepAnim.raf);
+        }
+        guideSweepAnim = null;
         const ce = document.getElementById("paletteCompass");
         if (ce) ce.classList.remove("active");
         const rle = document.getElementById("paletteRedLine");
