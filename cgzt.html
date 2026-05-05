@@ -92,6 +92,11 @@
       letter-spacing: 0.12em;
       -webkit-user-drag: none;
     }
+    .palette-item--click-add {
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
   </style>
 </head>
 <body>
@@ -101,17 +106,19 @@
     </div>
     <div class="controls" aria-label="控件区域">
       <div
-        class="palette-item"
-        draggable="true"
+        class="palette-item palette-item--click-add"
+        role="button"
+        tabindex="0"
         data-shape="triangle"
-        title="直角三角形（拖到画布）；画布上可拖动"
+        title="点击在画布中央添加直角三角形；画布上可拖动"
         aria-label="直角三角形"
       ></div>
       <div
-        class="palette-item"
-        draggable="true"
+        class="palette-item palette-item--click-add"
+        role="button"
+        tabindex="0"
         data-shape="leaf"
-        title="叶形轮廓（拖到画布）；画布上可拖动"
+        title="点击在画布中央添加叶形；画布上可拖动"
         aria-label="叶形"
       ></div>
       <div
@@ -119,7 +126,7 @@
         data-shape="ruler"
         role="button"
         tabindex="0"
-        title="点击在画布下方显示直尺，再点击隐藏；轻点直尺切换角度，拖动可移动"
+        title="点击在画布中央显示直尺，再点击隐藏；轻点直尺切换角度，拖动可移动"
         aria-label="直尺"
       >直尺</div>
       <div
@@ -139,27 +146,30 @@
         aria-label="红线"
       >红线</div>
       <div
-        class="palette-item palette-item--label"
-        draggable="true"
+        class="palette-item palette-item--label palette-item--click-add"
+        role="button"
+        tabindex="0"
         data-shape="label"
         data-letter="A"
-        title="字母 A：拖到画布上放置，可在画布上拖动"
+        title="点击在画布中央添加字母 A；可在画布上拖动"
         aria-label="字母 A"
       >A</div>
       <div
-        class="palette-item palette-item--label"
-        draggable="true"
+        class="palette-item palette-item--label palette-item--click-add"
+        role="button"
+        tabindex="0"
         data-shape="label"
         data-letter="B"
-        title="字母 B：拖到画布上放置，可在画布上拖动"
+        title="点击在画布中央添加字母 B；可在画布上拖动"
         aria-label="字母 B"
       >B</div>
       <div
-        class="palette-item palette-item--label"
-        draggable="true"
+        class="palette-item palette-item--label palette-item--click-add"
+        role="button"
+        tabindex="0"
         data-shape="label"
         data-letter="C"
-        title="字母 C：拖到画布上放置，可在画布上拖动"
+        title="点击在画布中央添加字母 C；可在画布上拖动"
         aria-label="字母 C"
       >C</div>
       <div
@@ -2579,64 +2589,6 @@
         };
       }
 
-      canvas.addEventListener("dragover", function (e) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
-      });
-
-      canvas.addEventListener("drop", function (e) {
-        e.preventDefault();
-        let type = e.dataTransfer.getData("application/x-shape") || "";
-        let letter = e.dataTransfer.getData("application/x-letter");
-        const plain = e.dataTransfer.getData("text/plain");
-        if (!type && plain && plain.indexOf("label:") === 0) {
-          type = "label";
-          letter = plain.slice(6);
-        } else if (!type) {
-          type = plain;
-        }
-        if (type === "label" && !letter && plain && plain.indexOf("label:") === 0) {
-          letter = plain.slice(6);
-        }
-        if (
-          type !== "triangle" &&
-          type !== "leaf" &&
-          type !== "label"
-        ) {
-          return;
-        }
-        if (type === "label" && !letter) return;
-        const p = cssPointFromEvent(e);
-        let w;
-        let h;
-        if (type === "triangle") {
-          w = TRI_LEG_TOP;
-          h = TRI_LEG_LEFT;
-        } else if (type === "leaf") {
-          w = LEAF_W;
-          h = LEAF_H;
-        } else {
-          w = LABEL_W;
-          h = LABEL_H;
-        }
-        let x = p.x - w / 2;
-        let y = p.y - h / 2;
-        x = Math.max(0, Math.min(cssW - w, x));
-        y = Math.max(0, Math.min(cssH - h, y));
-        if (type === "label") {
-          shapes.push({
-            id: nextId++,
-            type: "label",
-            letter: letter,
-            x: x,
-            y: y,
-          });
-        } else {
-          shapes.push({ id: nextId++, type: type, x: x, y: y });
-        }
-        redraw();
-      });
-
       function setCanvasCursorFromHover(px, py) {
         lastHoverCss.x = px;
         lastHoverCss.y = py;
@@ -2962,6 +2914,46 @@
       canvas.addEventListener("pointerup", endDrag);
       canvas.addEventListener("pointercancel", endDrag);
 
+      function addTriangleOrLeafFromPalette(kind) {
+        if (kind !== "triangle" && kind !== "leaf") return;
+        let w;
+        let h;
+        if (kind === "triangle") {
+          w = TRI_LEG_TOP;
+          h = TRI_LEG_LEFT;
+        } else {
+          w = LEAF_W;
+          h = LEAF_H;
+        }
+        const cw = cssW > 0 ? cssW : wrap.clientWidth;
+        const ch = cssH > 0 ? cssH : wrap.clientHeight;
+        let x = (cw - w) / 2;
+        let y = (ch - h) / 2;
+        x = Math.max(0, Math.min(cw - w, x));
+        y = Math.max(0, Math.min(ch - h, y));
+        shapes.push({ id: nextId++, type: kind, x: x, y: y });
+        redraw();
+      }
+
+      function addLabelFromPalette(letter) {
+        const w = LABEL_W;
+        const h = LABEL_H;
+        const cw = cssW > 0 ? cssW : wrap.clientWidth;
+        const ch = cssH > 0 ? cssH : wrap.clientHeight;
+        let x = (cw - w) / 2;
+        let y = (ch - h) / 2;
+        x = Math.max(0, Math.min(cw - w, x));
+        y = Math.max(0, Math.min(ch - h, y));
+        shapes.push({
+          id: nextId++,
+          type: "label",
+          letter: letter,
+          x: x,
+          y: y,
+        });
+        redraw();
+      }
+
       function toggleRulerFromPalette() {
         let hasRuler = false;
         for (let i = 0; i < shapes.length; i++) {
@@ -2981,15 +2973,18 @@
         } else {
           const cw = cssW > 0 ? cssW : wrap.clientWidth;
           const ch = cssH > 0 ? cssH : wrap.clientHeight;
-          const bottomMargin = 18;
+          const cx = Math.max(
+            RULER_W / 2,
+            Math.min(cw - RULER_W / 2, cw / 2)
+          );
           const cy = Math.max(
-            RULER_H / 2 + 6,
-            Math.min(ch - RULER_H / 2 - 6, ch - bottomMargin - RULER_H / 2)
+            RULER_H / 2,
+            Math.min(ch - RULER_H / 2, ch / 2)
           );
           const r = {
             id: nextId++,
             type: "ruler",
-            x: cw / 2,
+            x: cx,
             y: cy,
             angle: RULER_ANGLE_H,
           };
@@ -3014,11 +3009,15 @@
         }
         if (kind === "label") {
           const letter = el.getAttribute("data-letter") || "?";
-          el.addEventListener("dragstart", function (e) {
-            e.dataTransfer.setData("application/x-shape", "label");
-            e.dataTransfer.setData("application/x-letter", letter);
-            e.dataTransfer.setData("text/plain", "label:" + letter);
-            e.dataTransfer.effectAllowed = "copy";
+          el.addEventListener("click", function (e) {
+            e.preventDefault();
+            addLabelFromPalette(letter);
+          });
+          el.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              addLabelFromPalette(letter);
+            }
           });
           return;
         }
@@ -3034,10 +3033,15 @@
         }
         el.appendChild(pc);
 
-        el.addEventListener("dragstart", function (e) {
-          e.dataTransfer.setData("application/x-shape", kind);
-          e.dataTransfer.setData("text/plain", kind);
-          e.dataTransfer.effectAllowed = "copy";
+        el.addEventListener("click", function (e) {
+          e.preventDefault();
+          addTriangleOrLeafFromPalette(kind);
+        });
+        el.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            addTriangleOrLeafFromPalette(kind);
+          }
         });
       });
 
