@@ -134,6 +134,16 @@
       letter-spacing: 0.08em;
       -webkit-user-drag: none;
     }
+    .palette-item--method-one {
+      width: 76px;
+      letter-spacing: 0.06em;
+      -webkit-user-drag: none;
+    }
+    .palette-item--method-two {
+      width: 76px;
+      letter-spacing: 0.06em;
+      -webkit-user-drag: none;
+    }
     .palette-item--clear {
       letter-spacing: 0.12em;
       -webkit-user-drag: none;
@@ -162,7 +172,7 @@
     </div>
     <div class="bottom-bar">
       <footer class="page-attribution page-attribution--left" aria-label="学校署名">
-        <span>石实实验学校原创设计</span>
+        <span>本校AI团队原创设计</span>
       </footer>
       <div class="controls" aria-label="控件区域">
       <div
@@ -197,6 +207,22 @@
         title="将三条参考线上已有的点（基准短竖线与圆规吸附标记）按线分别水平平移：每条线最左侧的点对齐到同一条竖线上，且落在该参考线段从左量起约 1/8 长度处；对齐后在最左点 x 处绘制竖直虚线（略高于最上参考线、略低于最下参考线）；同时清除参考线下由直尺吸附产生的固定厘米/毫米长度文案；无参考线时无效"
         aria-label="对齐参考线点"
       >对齐</div>
+      <div
+        class="palette-item palette-item--label palette-item--method-one"
+        id="paletteMethodOne"
+        role="button"
+        tabindex="0"
+        title="方法一：不经直尺贴边，直接为凹四边形、正方形、平行四边形的每条边显示长度标注；图形编号下方仍显示周长类汇总算式（与四条边均贴尺后的效果一致）；无上述图形时无效"
+        aria-label="方法一标注边长"
+      >方法一</div>
+      <div
+        class="palette-item palette-item--label palette-item--method-two"
+        id="paletteMethodTwo"
+        role="button"
+        tabindex="0"
+        title="方法二：展开三条参考线（若尚未展开）；对每条线若已有五个点则不改；否则在偏左处添加起始基准点（三线起点横坐标互不相同），并按编号①②③将凹四边形、正方形、平行四边形的边长（1+2+3+4、四个3厘米、平行四边形四边）摊到该线上为五个点，且直接显示与直尺吸附参考线相同的长度文案（10厘米 / 12厘米 / 12厘米8毫米），无需再用直尺贴近参考线"
+        aria-label="方法二参考线边长"
+      >方法二</div>
       <div
         class="palette-item palette-item--label palette-item--undo"
         id="paletteUndo"
@@ -427,6 +453,12 @@
       const GUIDE_RULER_HINT_LINE23_REQUIRED_FOOT_MARKS = 4;
       /** 参考线吸附长度文案：画在参考线下方，相对线的竖直偏移（像素） */
       const GUIDE_RULER_HINT_BELOW_LINE_PX = 14;
+      /** 方法二：三线①②③对应的参考线吸附文案（与 trySnapRulerToGuideLine 一致） */
+      const METHOD_TWO_GUIDE_LINE_TEXTS = ["10厘米", "12厘米", "12厘米8毫米"];
+      /** 方法二：凹四边形边长摊平顺序（厘米），与 dartEdgesWorld 周界一致（左上→尖端→左下→凹点→闭合） */
+      const METHOD_TWO_DART_EDGE_CM = [3, 4, 2, 1];
+      /** 方法二：正方形四边（厘米） */
+      const METHOD_TWO_SQUARE_EDGE_CM = [3, 3, 3, 3];
       /** 刻度线在世界坐标中的局部 y（尺面顶部刻度一带），与 0 刻度对齐用 */
       const RULER_SCALE_LINE_Y = 14;
       /** 拖动直尺时，指针靠近凹四边形 / 正方形 / 平行四边形边的吸附距离（像素） */
@@ -2222,6 +2254,39 @@
         return false;
       }
 
+      function removeGuideDotsAndMarksOnLine(gyl) {
+        for (let i = guideLineRefDots.length - 1; i >= 0; i--) {
+          const rd = guideLineRefDots[i];
+          const dgy = rd.gy != null ? rd.gy : guideImplicitFootGy();
+          if (Math.abs(dgy - gyl) < 2) {
+            guideLineRefDots.splice(i, 1);
+          }
+        }
+        for (let i = guideLineMarks.length - 1; i >= 0; i--) {
+          const m = guideLineMarks[i];
+          if (typeof m === "number") {
+            continue;
+          }
+          if (Math.abs(guideMarkFootY(m) - gyl) < 2) {
+            guideLineMarks.splice(i, 1);
+          }
+        }
+      }
+
+      function upsertGuideRulerSnapHint(entry) {
+        let replaced = false;
+        for (let hi = 0; hi < guideRulerSnapHints.length; hi++) {
+          if (guideRulerSnapHints[hi].lineIdx === entry.lineIdx) {
+            guideRulerSnapHints[hi] = entry;
+            replaced = true;
+            break;
+          }
+        }
+        if (!replaced) {
+          guideRulerSnapHints.push(entry);
+        }
+      }
+
       /** 参考线 gyl 上圆规足印个数（对象项；不含纯数字 legacy） */
       function countGuideFootMarksOnLine(gyl) {
         let n = 0;
@@ -2313,23 +2378,11 @@
               GUIDE_RULER_HINT_LINE23_REQUIRED_FOOT_MARKS;
         }
         if (lineIdx >= 0 && lineIdx < 3 && qualifies) {
-          const texts = ["10厘米", "12厘米", "12厘米8毫米"];
-          const entry = {
-            text: texts[lineIdx],
+          upsertGuideRulerSnapHint({
+            text: METHOD_TWO_GUIDE_LINE_TEXTS[lineIdx],
             lineIdx: lineIdx,
             gy: bestGy,
-          };
-          let replaced = false;
-          for (let hi = 0; hi < guideRulerSnapHints.length; hi++) {
-            if (guideRulerSnapHints[hi].lineIdx === lineIdx) {
-              guideRulerSnapHints[hi] = entry;
-              replaced = true;
-              break;
-            }
-          }
-          if (!replaced) {
-            guideRulerSnapHints.push(entry);
-          }
+          });
         }
         return true;
       }
@@ -2855,6 +2908,147 @@
             SHAPE_POLY_SUMMARY_LINE_GAP_PX + SHAPE_POLY_SUMMARY_LINE_HEIGHT_PX;
         }
         ctx.restore();
+      }
+
+      /**
+       * 方法一：不经直尺贴边，直接为各四边形四条边登记长度标注。
+       */
+      function applyMethodOneSkipRulerPolyHints() {
+        const polyShapes = [];
+        for (let i = 0; i < shapes.length; i++) {
+          const s = shapes[i];
+          if (polyPersistTagForShapeType(s.type)) {
+            polyShapes.push(s);
+          }
+        }
+        if (polyShapes.length === 0) return;
+
+        let needSnap = false;
+        outer: for (let si = 0; si < polyShapes.length; si++) {
+          const s = polyShapes[si];
+          const tag = polyPersistTagForShapeType(s.type);
+          for (let ei = 0; ei < 4; ei++) {
+            const k = tag + ":" + String(s.id) + ":" + String(ei);
+            if (!persistedPolyEdgeHintKeys.has(k)) {
+              needSnap = true;
+              break outer;
+            }
+          }
+        }
+        if (needSnap) {
+          pushUndoSnapshot();
+        }
+
+        for (let si = 0; si < polyShapes.length; si++) {
+          const s = polyShapes[si];
+          const tag = polyPersistTagForShapeType(s.type);
+          for (let ei = 0; ei < 4; ei++) {
+            persistedPolyEdgeHintKeys.add(
+              tag + ":" + String(s.id) + ":" + String(ei)
+            );
+          }
+        }
+        redraw();
+      }
+
+      /**
+       * 方法二：展开三条参考线；未满五个点的线从左起铺设凹四边形 / 正方形 / 平行四边形边长并写入吸附文案。
+       */
+      function applyMethodTwoGuideSegmentLayout() {
+        const willExpandStructure =
+          !bottomGuideLineShown || extraGuideLineOffsetsPx.length < 2;
+
+        const curYs = bottomGuideLineShown ? getAllGuideLineYs() : [];
+
+        /** @type {number[]} */
+        const linesNeedingWorkIdx = [];
+        if (willExpandStructure) {
+          for (let li = 0; li < curYs.length && li < 3; li++) {
+            if (guideOrderedPointXsOnLine(curYs[li]).length < 5) {
+              linesNeedingWorkIdx.push(li);
+            }
+          }
+          for (let li = curYs.length; li < 3; li++) {
+            linesNeedingWorkIdx.push(li);
+          }
+        } else {
+          for (let li = 0; li < curYs.length && li < 3; li++) {
+            if (guideOrderedPointXsOnLine(curYs[li]).length < 5) {
+              linesNeedingWorkIdx.push(li);
+            }
+          }
+        }
+
+        if (linesNeedingWorkIdx.length === 0) {
+          return;
+        }
+
+        pushUndoSnapshot();
+
+        bottomGuideLineShown = true;
+        while (extraGuideLineOffsetsPx.length < 2) {
+          extraGuideLineOffsetsPx.push(EXTRA_GUIDE_STEP_PX);
+        }
+        const guideYs = getAllGuideLineYs();
+
+        const gl = GUIDE_LINE_XL;
+        const gr = guideLineSegRightX();
+        const seg = Math.max(1, gr - gl);
+        const basePad = Math.min(56, seg * 0.075);
+        const startOffsetsPx = [
+          0,
+          Math.round(seg * 0.042),
+          Math.round(seg * 0.084),
+        ];
+
+        const paraCmSeq = [
+          PARA_W / PX_PER_CM,
+          PARA_SIDE_LEN / PX_PER_CM,
+          PARA_W / PX_PER_CM,
+          PARA_SIDE_LEN / PX_PER_CM,
+        ];
+        const cmSequences = [
+          METHOD_TWO_DART_EDGE_CM,
+          METHOD_TWO_SQUARE_EDGE_CM,
+          paraCmSeq,
+        ];
+
+        for (let lineIdx = 0; lineIdx < 3 && lineIdx < guideYs.length; lineIdx++) {
+          const gyl = guideYs[lineIdx];
+          if (guideOrderedPointXsOnLine(gyl).length >= 5) {
+            continue;
+          }
+
+          removeGuideDotsAndMarksOnLine(gyl);
+
+          let startX = gl + basePad + startOffsetsPx[lineIdx];
+          startX = Math.max(gl + 8, Math.min(gr - PX_PER_CM * 11, startX));
+
+          guideLineRefDots.push({ x: startX, gy: gyl });
+
+          const deltas = cmSequences[lineIdx];
+          let cum = startX;
+          let prevX = startX;
+          for (let i = 0; i < 4; i++) {
+            cum += deltas[i] * PX_PER_CM;
+            const footX = Math.min(gr - 4, cum);
+            guideLineMarks.push({
+              x: footX,
+              pivotX: prevX,
+              pivotY: gyl,
+              gy: gyl,
+            });
+            prevX = footX;
+          }
+
+          upsertGuideRulerSnapHint({
+            text: METHOD_TWO_GUIDE_LINE_TEXTS[lineIdx],
+            lineIdx: lineIdx,
+            gy: gyl,
+          });
+        }
+
+        redraw();
       }
 
       function hitTest(cssX, cssY) {
@@ -3607,6 +3801,36 @@
         function activate(e) {
           if (e) e.preventDefault();
           alignGuideLinePointsToOneEighth();
+        }
+        el.addEventListener("click", activate);
+        el.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            activate(e);
+          }
+        });
+      })();
+
+      (function initPaletteMethodOne() {
+        const el = document.getElementById("paletteMethodOne");
+        if (!el) return;
+        function activate(e) {
+          if (e) e.preventDefault();
+          applyMethodOneSkipRulerPolyHints();
+        }
+        el.addEventListener("click", activate);
+        el.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            activate(e);
+          }
+        });
+      })();
+
+      (function initPaletteMethodTwo() {
+        const el = document.getElementById("paletteMethodTwo");
+        if (!el) return;
+        function activate(e) {
+          if (e) e.preventDefault();
+          applyMethodTwoGuideSegmentLayout();
         }
         el.addEventListener("click", activate);
         el.addEventListener("keydown", function (e) {
