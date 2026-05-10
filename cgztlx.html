@@ -1627,8 +1627,6 @@
        */
       function trySnapCompassToNearestPolyEdgeByPointer(cmp, px, py) {
         const L = COMPASS_LEG_LEN;
-        const margin = COMPASS_LEG_LEN + COMPASS_HINGE_R;
-        const mar = margin * 0.15;
         let best = null;
         let bestScore = 1e9;
 
@@ -1663,8 +1661,8 @@
           }
         }
         if (best) {
-          cmp.x = Math.max(mar, Math.min(cssW - mar, best.cx));
-          cmp.y = Math.max(COMPASS_Y_MIN, Math.min(cssH - mar, best.cy));
+          cmp.x = best.cx;
+          cmp.y = best.cy;
           cmp.angle = best.ang;
           cmp.spread = best.spread;
           cmp.edgeSnapStraightenPending = true;
@@ -2516,8 +2514,6 @@
         while (cur > Math.PI) cur -= 2 * Math.PI;
         while (cur < -Math.PI) cur += 2 * Math.PI;
         const ang = Math.abs(cur) < Math.abs(cur - Math.PI) ? 0 : Math.PI;
-        const margin = COMPASS_LEG_LEN + COMPASS_HINGE_R;
-        const mar = margin * 0.15;
         let refAnchorX = null;
         let bestRefD = 1e9;
         for (let ri = 0; ri < guideLineRefDots.length; ri++) {
@@ -2545,10 +2541,8 @@
             spread: cmp.spread,
           };
           const h = compassHingeFromLeftTipWorld(anchorX, gy, ang, sp, L);
-          const cx = Math.max(mar, Math.min(cssW - mar, h.cx));
-          const cy = Math.max(COMPASS_Y_MIN, Math.min(cssH - mar, h.cy));
-          cmp.x = cx;
-          cmp.y = cy;
+          cmp.x = h.cx;
+          cmp.y = h.cy;
           cmp.angle = ang;
           cmp.spread = sp;
           const tips2 = compassTipsWorld(cmp);
@@ -2615,8 +2609,9 @@
 
         const cosA = Math.cos(ang);
         const cy0 = gy - L * Math.cos(sp) * cosA;
-        cmp.x = Math.max(mar, Math.min(cssW - mar, cmp.x));
-        cmp.y = Math.max(COMPASS_Y_MIN, Math.min(cssH - mar, cy0));
+        const cPos = clampCompassDragCenter(cmp.x, cy0);
+        cmp.x = cPos.x;
+        cmp.y = cPos.y;
         cmp.angle = ang;
         cmp.spread = sp;
         const tips2 = compassTipsWorld(cmp);
