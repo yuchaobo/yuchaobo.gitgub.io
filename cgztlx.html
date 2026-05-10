@@ -1577,6 +1577,18 @@
       }
 
       /**
+       * 拖动圆规铰链时的画布边界：允许铰链移出可视区约一整条腿长的范围，
+       * 避免旧版把铰链压在边内约 35px 导致两脚尚有一半在画布内就无法继续外移。
+       */
+      function clampCompassDragCenter(nx, ny) {
+        const reach = COMPASS_LEG_LEN + COMPASS_HINGE_R + 28;
+        return {
+          x: Math.max(-reach, Math.min(cssW + reach, nx)),
+          y: Math.max(COMPASS_Y_MIN, Math.min(cssH + reach, ny)),
+        };
+      }
+
+      /**
        * 左腿尖落在 Va、右腿尖落在 Vb（有向边），求铰链、张角、朝向。
        * @returns {{ cx: number, cy: number, ang: number, spread: number, err: number } | null}
        */
@@ -3585,11 +3597,9 @@
             }
             let nx = p.x - dragOffsetX;
             let ny = p.y - dragOffsetY;
-            const margin = COMPASS_LEG_LEN + COMPASS_HINGE_R;
-            nx = Math.max(margin * 0.15, Math.min(cssW - margin * 0.15, nx));
-            ny = Math.max(COMPASS_Y_MIN, Math.min(cssH - margin * 0.15, ny));
-            s.x = nx;
-            s.y = ny;
+            const c = clampCompassDragCenter(nx, ny);
+            s.x = c.x;
+            s.y = c.y;
             maybeStraightenCompassUprightIfLeftPolyEdge(s);
             redraw();
             return;
